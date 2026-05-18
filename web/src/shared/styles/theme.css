@@ -1,0 +1,128 @@
+/* 设计令牌：方向 A「纸本」。
+   清空 Tailwind 的默认色板、字号、行高、字距与断点，只保留这套设计用得到的刻度，
+   写出 text-red-500 之类不属于本设计的类名时不会生成样式。
+   static：变量总会输出，CodeMirror 主题等 JS 里的 var(--color-*) 也能取到。 */
+@theme static {
+  --color-*: initial;
+  --color-paper: #fbfbf9;
+  --color-ink: #1c1c1a;
+  --color-ink-soft: #3d3d39;
+  --color-muted: #6b6b66;
+  --color-line: #deded8;
+  --color-line-soft: #ecece6;
+  --color-accent: #1f4e8c;
+  --color-accent-strong: #163a6a;
+  --color-on-accent: #ffffff;
+  --color-code: #f3f3ee;
+  --color-code-line: #e6e6e0;
+  --color-code-inline: #f0f0eb;
+  --color-mark: #fbe9a6;
+  --color-control: #ffffff;
+  --color-control-line: #cfcfc8;
+  --color-ok: #2f6b3a;
+  --color-warn: #8a5a00;
+  --color-danger: #a12c2c;
+  --color-danger-soft: #f8e8e4;
+  --color-syntax-heading: #7a2e2e;
+  --color-overlay: rgb(28 28 26 / 36%);
+
+  --font-*: initial;
+  --font-serif: "Source Serif 4 Variable", "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-math: "STIX Two Math", "Latin Modern Math", math;
+  --default-font-family: var(--font-serif);
+  --default-mono-font-family: var(--font-mono);
+
+  /* 字号：xs 标签 · sm 元信息 · md 后台控件 · base 次要正文 · lg 页面正文 · xl 文章正文 · 2xl 起为标题，7xl 只给文章大标题 */
+  --text-*: initial;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.6;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.6;
+  --text-md: 0.875rem;
+  --text-md--line-height: 1.6;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.6;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.8;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: 1.9;
+  --text-2xl: 1.1875rem;
+  --text-2xl--line-height: 1.4;
+  --text-3xl: 1.375rem;
+  --text-3xl--line-height: 1.4;
+  --text-4xl: 1.625rem;
+  --text-4xl--line-height: 1.35;
+  --text-5xl: 1.875rem;
+  --text-5xl--line-height: 1.3;
+  --text-6xl: 2.25rem;
+  --text-6xl--line-height: 1.3;
+  --text-7xl: 2.625rem;
+  --text-7xl--line-height: 1.25;
+
+  --leading-*: initial;
+  --leading-none: 1;
+  --leading-tight: 1.3;
+  --leading-snug: 1.4;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.7;
+  --leading-loose: 1.8;
+
+  --tracking-*: initial;
+  --tracking-wide: 0.04em;
+  --tracking-wider: 0.08em;
+  --tracking-widest: 0.2em;
+
+  --breakpoint-*: initial;
+  --breakpoint-sm: 37.5rem;
+  --breakpoint-md: 44.5rem;
+  --breakpoint-lg: 53.75rem;
+  --breakpoint-xl: 68.75rem;
+
+  /* 版心：measure 是正文栏宽，wide 是带目录的文章页与后台内容区宽度。 */
+  --container-measure: 42.5rem;
+  --container-wide: 61.25rem;
+
+  --radius-*: initial;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --shadow-*: initial;
+  --shadow-popover: 0 8px 24px rgb(0 0 0 / 10%);
+  --shadow-dialog: 0 16px 48px rgb(0 0 0 / 14%);
+}
+
+/* 深色值仅在系统深色模式下生效；工具类引用的是同名变量，覆盖变量即可整体换色。 */
+@layer theme {
+  :root {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-paper: #161718;
+      --color-ink: #e6e4de;
+      --color-ink-soft: #c9c7c0;
+      --color-muted: #9c9a93;
+      --color-line: #34353a;
+      --color-line-soft: #26272b;
+      --color-accent: #8db2e6;
+      --color-accent-strong: #b3cdf0;
+      --color-on-accent: #10161f;
+      --color-code: #1d1e21;
+      --color-code-line: #2a2b2f;
+      --color-code-inline: #26272b;
+      --color-mark: #5c4a12;
+      --color-control: #1d1e21;
+      --color-control-line: #45464b;
+      --color-ok: #7fbf8a;
+      --color-warn: #d8a650;
+      --color-danger: #e58b84;
+      --color-danger-soft: #3a2220;
+      --color-syntax-heading: #e3a49a;
+      --color-overlay: rgb(0 0 0 / 55%);
+    }
+  }
+}
