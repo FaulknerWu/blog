@@ -1,0 +1,29 @@
+/* 在 Preflight 之上补充全站默认：纸色背景、衬线正文、无下划线链接。 */
+@layer base {
+  body {
+    @apply bg-paper text-lg text-ink antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  a:hover {
+    @apply text-accent;
+  }
+
+  :focus-visible {
+    @apply rounded-xs outline-2 outline-offset-2 outline-accent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+
+  /* Preflight 把按钮、表单控件的光标还原为默认箭头，这里恢复为手型。 */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  dialog::backdrop {
+    @apply bg-overlay;
+  }
+}
