@@ -1,0 +1,131 @@
+/* 正文排版：Markdown 渲染出的 HTML 无法逐个加类名，统一由 .prose 后代选择器排版。
+   文章页与后台编辑器预览共用。 */
+@layer components {
+  .prose {
+    @apply text-xl leading-[1.95] wrap-break-word text-ink;
+
+    & > * + * {
+      margin-top: 1.4em;
+    }
+
+    /* 两个子组合器的优先级高于下面的 h2 { margin-top }，正文以标题开头时不留空。 */
+    & > :first-child {
+      margin-top: 0;
+    }
+
+    & :where(h2, h3, h4, h5, h6) {
+      @apply scroll-mt-6 leading-snug;
+    }
+
+    & h2 {
+      @apply mt-[2em] text-4xl font-bold;
+    }
+
+    & h3 {
+      @apply mt-[1.6em] text-3xl font-semibold;
+    }
+
+    & :where(h4, h5, h6) {
+      @apply mt-[1.4em] text-xl font-semibold;
+    }
+
+    & :where(h2, h3, h4) + * {
+      margin-top: 0.7em;
+    }
+
+    & a {
+      @apply text-accent underline decoration-1 underline-offset-[0.2em];
+    }
+
+    & ul {
+      @apply list-disc;
+    }
+
+    & ol {
+      @apply list-decimal;
+    }
+
+    & :where(ul, ol) {
+      padding-left: 1.4em;
+    }
+
+    & :where(ul, ol) ul {
+      @apply list-[circle];
+    }
+
+    & li + li,
+    & li > :where(ul, ol) {
+      margin-top: 0.4em;
+    }
+
+    & blockquote {
+      @apply border-l-2 border-accent pl-6 text-ink-soft italic;
+    }
+
+    & hr {
+      @apply mx-auto my-[2.4em] h-px w-2/5 border-0 bg-line;
+    }
+
+    & code {
+      @apply rounded-xs bg-code-inline px-[0.4em] py-[0.15em] font-mono text-[0.86em];
+    }
+
+    & pre {
+      @apply overflow-x-auto rounded-md border border-code-line bg-code! px-5.5 py-5 text-md leading-relaxed;
+      tab-size: 2;
+
+      & code {
+        @apply rounded-none bg-transparent p-0 text-[length:inherit];
+      }
+    }
+
+    /* 公式语法错误时渲染器输出的占位：原样显示源码，用红色虚线标出。 */
+    & [data-math-error] {
+      @apply rounded-none border-x-0 border-y border-dashed border-danger bg-transparent! py-2.5 whitespace-pre-wrap text-danger;
+    }
+
+    /* Shiki 双主题：浅色用 --shiki-light，深色模式切换到 --shiki-dark。 */
+    & .shiki span {
+      color: var(--shiki-light);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      & .shiki,
+      & .shiki span {
+        color: var(--shiki-dark) !important;
+      }
+    }
+
+    & :where(img, picture) {
+      @apply mx-auto block rounded-sm;
+    }
+
+    & figcaption {
+      @apply mt-[0.6em] text-center text-md leading-[inherit] text-muted;
+    }
+
+    & table {
+      @apply block max-w-full overflow-x-auto text-base leading-normal;
+    }
+
+    & :where(th, td) {
+      @apply border-b border-line px-3.5 py-2 text-left align-top;
+    }
+
+    & th {
+      @apply border-b-ink font-semibold;
+    }
+
+    & math {
+      @apply font-math text-[1.05em];
+    }
+
+    & math[display="block"] {
+      @apply overflow-x-auto overflow-y-hidden py-[0.4em];
+    }
+
+    & mark {
+      @apply bg-mark text-inherit;
+    }
+  }
+}
