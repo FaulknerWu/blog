@@ -31,6 +31,7 @@ type FieldError struct {
 	Parameter string `json:"parameter,omitempty"`
 	Code      string `json:"code"`
 	Detail    string `json:"detail"`
+	Line      int    `json:"line,omitempty"` // 正文渲染错误所在的 Markdown 行号
 }
 
 // Error 对应 RFC 9457 problem details 响应，Kind 拼接在 problem base 之后作为 type 字段。
@@ -123,6 +124,10 @@ func RateLimited(retryAfter time.Duration) *Error {
 	e := newError(http.StatusTooManyRequests, "rate-limited", "请求过于频繁", "请稍后再试")
 	e.Header = http.Header{"Retry-After": {strconv.Itoa(secs)}}
 	return e
+}
+
+func ServiceUnavailable(detail string) *Error {
+	return newError(http.StatusServiceUnavailable, "service-unavailable", "服务暂不可用", detail)
 }
 
 func Internal() *Error {

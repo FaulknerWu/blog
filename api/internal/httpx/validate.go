@@ -17,6 +17,10 @@ func (v *Validator) Add(pointer, code, detail string) {
 	v.errs = append(v.errs, FieldError{Pointer: pointer, Code: code, Detail: detail})
 }
 
+func (v *Validator) AddError(e FieldError) {
+	v.errs = append(v.errs, e)
+}
+
 func (v *Validator) Err() error {
 	if len(v.errs) == 0 {
 		return nil
