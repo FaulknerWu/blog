@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+type ApiToken struct {
+	ID         int64
+	UserID     int64
+	Name       string
+	TokenHash  []byte
+	Scopes     []string
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	ExpiresAt  *time.Time
+}
+
 type MediaReference struct {
 	MediaID   int64
 	OwnerType string
