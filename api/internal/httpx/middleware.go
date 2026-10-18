@@ -118,19 +118,17 @@ func AccessLog(next http.Handler) http.Handler {
 	})
 }
 
-// SameOrigin 是 CSRF 防护：非安全方法必须同时满足 Sec-Fetch-Site 为 same-origin 且 Origin 与站点一致。
-func SameOrigin(siteOrigin string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-		default:
-			if r.Header.Get("Sec-Fetch-Site") != "same-origin" || r.Header.Get("Origin") != siteOrigin {
-				WriteError(w, r, Forbidden("跨站请求校验失败"))
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
+// CheckSameOrigin 是 CSRF 防护，只用于浏览器会话：非安全方法必须同时满足 Sec-Fetch-Site 为 same-origin
+// 且 Origin 与站点一致。Bearer 令牌不会被浏览器自动附带，不需要这项校验。
+func CheckSameOrigin(r *http.Request, siteOrigin string) error {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return nil
+	}
+	if r.Header.Get("Sec-Fetch-Site") != "same-origin" || r.Header.Get("Origin") != siteOrigin {
+		return Forbidden("跨站请求校验失败")
+	}
+	return nil
 }
 
 func CacheControl(value string, next http.Handler) http.Handler {

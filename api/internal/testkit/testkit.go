@@ -78,3 +78,13 @@ func New(t testing.TB) *Env {
 	return &Env{App: a, Store: s, Render: fr}
 }
 
+// Token 直接通过服务层为作者签发 API 令牌。
+func (e *Env) Token(t testing.TB, scopes ...string) string {
+	t.Helper()
+	svc := auth.NewService(e.Store)
+	secret, _, err := svc.CreateTokenFor(context.Background(), User, auth.TokenInput{Name: "test-" + rand.Text()[:8], Scopes: scopes})
+	if err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	return secret
+}

@@ -25,13 +25,19 @@ const (
 	maxPasswordLen = 1024
 )
 
+// Principal 是通过鉴权的请求主体，来自浏览器会话（Via=ViaSession）或 API 令牌（Via=ViaToken）。
 type Principal struct {
 	UserID      int64
 	Username    string
 	DisplayName string
-	SessionID   int64
-	ExpiresAt   time.Time
-	Refreshed   bool
+	Via         Via
+
+	SessionID int64 // 仅会话
+	ExpiresAt time.Time
+	Refreshed bool
+
+	TokenID int64 // 仅令牌
+	Scopes  []string
 }
 
 type Service struct {
@@ -96,7 +102,7 @@ func (s *Service) Login(ctx context.Context, username, password, userAgent strin
 	return token, user, sess, nil
 }
 
-func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, error) {
+func (s *Service) authenticateSession(ctx context.Context, token string) (*Principal, error) {
 	if token == "" {
 		return nil, httpx.Unauthenticated("请先登录")
 	}
@@ -111,6 +117,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, e
 		UserID:      row.UserID,
 		Username:    row.Username,
 		DisplayName: row.DisplayName,
+		Via:         ViaSession,
 		SessionID:   row.ID,
 		ExpiresAt:   row.ExpiresAt,
 	}
@@ -215,6 +222,7 @@ func (s *Service) CreateUser(ctx context.Context, username, displayName, passwor
 	return u, err
 }
 
+// ResetPassword 是服务端运维操作，通常意味着账户可能已泄露，因此同时吊销全部会话与 API 令牌。
 func (s *Service) ResetPassword(ctx context.Context, username, password string) error {
 	var v httpx.Validator
 	validateNewPassword(&v, "password", password)
@@ -233,6 +241,9 @@ func (s *Service) ResetPassword(ctx context.Context, username, password string) 
 		if _, err := q.UpdateUserPassword(ctx, store.UpdateUserPasswordParams{ID: user.ID, PasswordHash: hash}); err != nil {
 			return err
 		}
-		return q.DeleteUserSessions(ctx, user.ID)
+		if err := q.DeleteUserSessions(ctx, user.ID); err != nil {
+			return err
+		}
+		return q.DeleteUserAPITokens(ctx, user.ID)
 	})
 }

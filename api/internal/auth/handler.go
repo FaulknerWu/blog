@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,22 +46,65 @@ func clearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
-// Require 是鉴权中间件：校验会话 cookie 并把 Principal 注入 context；会话续期时同步刷新 cookie 有效期。
-func (h *Handler) Require(next http.Handler) http.Handler {
-	return httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
-		var token string
-		if c, err := r.Cookie(cookieName); err == nil {
-			token = c.Value
+// authenticate 识别请求凭据：带 Authorization 头时按 Bearer 令牌校验，否则读取会话 cookie。
+// 只有会话需要跨站请求校验，因为浏览器只会自动附带 cookie。
+func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) (*Principal, error) {
+	if authz := r.Header.Get("Authorization"); authz != "" {
+		secret, ok := strings.CutPrefix(authz, "Bearer ")
+		if !ok {
+			return nil, httpx.Unauthenticated("Authorization 头必须为 Bearer 令牌")
 		}
-		p, err := h.svc.Authenticate(r.Context(), token)
-		if err != nil {
-			if token != "" {
-				clearSessionCookie(w)
+		return h.svc.authenticateToken(r.Context(), strings.TrimSpace(secret))
+	}
+	var token string
+	if c, err := r.Cookie(cookieName); err == nil {
+		token = c.Value
+	}
+	if token != "" {
+		if err := httpx.CheckSameOrigin(r, h.siteOrigin); err != nil {
+			return nil, err
+		}
+	}
+	p, err := h.svc.authenticateSession(r.Context(), token)
+	if err != nil {
+		if token != "" {
+			clearSessionCookie(w)
+		}
+		return nil, err
+	}
+	if p.Refreshed {
+		setSessionCookie(w, token, p.ExpiresAt)
+	}
+	return p, nil
+}
+
+// Require 返回鉴权中间件：校验凭据并把 Principal 注入 context。scope 为空表示只要求已登录；
+// 否则 API 令牌必须拥有该 scope，浏览器会话不受限制。
+func (h *Handler) Require(scope Scope) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+			p, err := h.authenticate(w, r)
+			if err != nil {
+				return err
 			}
+			if scope != "" && !p.Can(scope) {
+				return httpx.Forbidden(fmt.Sprintf("令牌缺少 %s 权限", scope))
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+			return nil
+		})
+	}
+}
+
+// RequireSession 只接受浏览器会话：账户、会话与令牌管理不向 API 令牌开放，令牌泄露也无法借此提权或续期。
+func (h *Handler) RequireSession(next http.Handler) http.Handler {
+	return httpx.Handler(func(w http.ResponseWriter, r *http.Request) error {
+		p, err := h.authenticate(w, r)
+		if err != nil {
 			return err
 		}
-		if p.Refreshed {
-			setSessionCookie(w, token, p.ExpiresAt)
+		if p.Via != ViaSession {
+			return httpx.Forbidden("该操作只能在浏览器会话中进行")
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 		return nil
@@ -67,18 +112,46 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 }
 
 type Handler struct {
-	svc     *Service
-	limiter *limiter
+	svc        *Service
+	siteOrigin string
+	limiter    *limiter
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc, limiter: newLimiter(10, 30*time.Second)}
+func NewHandler(svc *Service, siteOrigin string) *Handler {
+	return &Handler{svc: svc, siteOrigin: siteOrigin, limiter: newLimiter(10, 30*time.Second)}
 }
 
 type userJSON struct {
 	ID          int64  `json:"id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
+}
+
+// meJSON 在用户信息之外说明本次请求所用凭据的类型与权限，供 CLI 自检。
+type meJSON struct {
+	userJSON
+	Via    string   `json:"via"`
+	Scopes []string `json:"scopes"`
+}
+
+type tokenJSON struct {
+	ID         int64       `json:"id"`
+	Name       string      `json:"name"`
+	Scopes     []string    `json:"scopes"`
+	CreatedAt  httpx.Time  `json:"created_at"`
+	LastUsedAt *httpx.Time `json:"last_used_at"`
+	ExpiresAt  *httpx.Time `json:"expires_at"`
+}
+
+func toTokenJSON(t store.ApiToken) tokenJSON {
+	return tokenJSON{
+		ID:         t.ID,
+		Name:       t.Name,
+		Scopes:     t.Scopes,
+		CreatedAt:  httpx.NewTime(t.CreatedAt),
+		LastUsedAt: httpx.NewTimePtr(t.LastUsedAt),
+		ExpiresAt:  httpx.NewTimePtr(t.ExpiresAt),
+	}
 }
 
 type sessionJSON struct {
@@ -92,6 +165,9 @@ type sessionJSON struct {
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) error {
+	if err := httpx.CheckSameOrigin(r, h.siteOrigin); err != nil {
+		return err
+	}
 	ip := httpx.ClientIP(r)
 	if ok, retry := h.limiter.allow(ip.String()); !ok {
 		return httpx.RateLimited(retry)
@@ -183,7 +259,56 @@ func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) error {
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) error {
 	p := FromContext(r.Context())
-	return httpx.WriteJSON(w, http.StatusOK, userJSON{ID: p.UserID, Username: p.Username, DisplayName: p.DisplayName})
+	me := meJSON{
+		userJSON: userJSON{ID: p.UserID, Username: p.Username, DisplayName: p.DisplayName},
+		Via:      "session",
+		Scopes:   p.Scopes,
+	}
+	if p.Via == ViaSession {
+		me.Scopes = make([]string, 0, len(Scopes))
+		for _, s := range Scopes {
+			me.Scopes = append(me.Scopes, string(s))
+		}
+	} else {
+		me.Via = "token"
+	}
+	return httpx.WriteJSON(w, http.StatusOK, me)
+}
+
+func (h *Handler) ListTokens(w http.ResponseWriter, r *http.Request) error {
+	rows, err := h.svc.ListTokens(r.Context(), FromContext(r.Context()).UserID)
+	if err != nil {
+		return err
+	}
+	items := make([]tokenJSON, 0, len(rows))
+	for _, t := range rows {
+		items = append(items, toTokenJSON(t))
+	}
+	return httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// CreateToken 签发令牌。secret 只在本次响应中出现，之后无法再次查看。
+func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) error {
+	var in TokenInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		return err
+	}
+	secret, t, err := h.svc.CreateToken(r.Context(), FromContext(r.Context()).UserID, in)
+	if err != nil {
+		return err
+	}
+	return httpx.WriteJSON(w, http.StatusCreated, map[string]any{"token": toTokenJSON(t), "secret": secret})
+}
+
+func (h *Handler) RevokeToken(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpx.PathID(r, "id")
+	if err != nil {
+		return err
+	}
+	if err := h.svc.RevokeToken(r.Context(), FromContext(r.Context()).UserID, id); err != nil {
+		return err
+	}
+	return httpx.NoContent(w)
 }
 
 func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) error {

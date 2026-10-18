@@ -38,7 +38,7 @@ func New(cfg Config, s *store.Store) (*App, error) {
 	contentSvc := content.NewService(s, render.NewClient(cfg.RenderURL))
 	a := &App{cfg: cfg, store: s, auth: authSvc, content: contentSvc}
 	a.handler = a.routes(
-		auth.NewHandler(authSvc),
+		auth.NewHandler(authSvc, cfg.SiteURL),
 		content.NewHandler(contentSvc),
 		post.NewHandler(post.NewService(s, contentSvc), s),
 		page.NewHandler(page.NewService(s, contentSvc), s),
@@ -86,56 +86,65 @@ func (a *App) routes(authH *auth.Handler, contentH *content.Handler, postH *post
 		route{pattern: "GET /api/settings", h: settingsH.Public},
 	)
 
+	// 认证：登录自行做跨站校验；账户、会话与令牌管理只接受浏览器会话。
 	register("no-store", nil,
 		route{pattern: "POST /api/auth/sessions", h: authH.Login},
 	)
-	register("no-store", authH.Require,
+	register("no-store", authH.Require(""),
+		route{pattern: "GET /api/auth/me", h: authH.Me},
+	)
+	register("no-store", authH.RequireSession,
 		route{pattern: "DELETE /api/auth/sessions/current", h: authH.Logout},
 		route{pattern: "GET /api/auth/sessions", h: authH.ListSessions},
 		route{pattern: "DELETE /api/auth/sessions/{id}", h: authH.RevokeSession},
-		route{pattern: "GET /api/auth/me", h: authH.Me},
 		route{pattern: "PUT /api/auth/password", h: authH.ChangePassword},
+		route{pattern: "GET /api/auth/tokens", h: authH.ListTokens},
+		route{pattern: "POST /api/auth/tokens", h: authH.CreateToken},
+		route{pattern: "DELETE /api/auth/tokens/{id}", h: authH.RevokeToken},
 	)
 
-	register("no-store", authH.Require,
+	// 管理接口按 scope 分组；浏览器会话拥有全部 scope。
+	register("no-store", authH.Require(auth.ScopeContentRead),
 		route{pattern: "GET /api/admin/render", h: contentH.Renderer},
-		route{pattern: "POST /api/admin/render", h: contentH.Preview, maxBody: content.MaxRequestBody},
-
 		route{pattern: "GET /api/admin/posts", h: postH.AdminList},
-		route{pattern: "POST /api/admin/posts", h: postH.Create, maxBody: content.MaxRequestBody},
 		route{pattern: "GET /api/admin/posts/{id}", h: postH.Get},
-		route{pattern: "PUT /api/admin/posts/{id}", h: postH.Update, maxBody: content.MaxRequestBody},
-		route{pattern: "DELETE /api/admin/posts/{id}", h: postH.Delete},
-		route{pattern: "PUT /api/admin/posts/{id}/publication", h: postH.Publish},
-		route{pattern: "DELETE /api/admin/posts/{id}/publication", h: postH.Unpublish},
-
 		route{pattern: "GET /api/admin/pages", h: pageH.AdminList},
-		route{pattern: "POST /api/admin/pages", h: pageH.Create, maxBody: content.MaxRequestBody},
 		route{pattern: "GET /api/admin/pages/{id}", h: pageH.Get},
-		route{pattern: "PUT /api/admin/pages/{id}", h: pageH.Update, maxBody: content.MaxRequestBody},
-		route{pattern: "DELETE /api/admin/pages/{id}", h: pageH.Delete},
-		route{pattern: "PUT /api/admin/pages/{id}/publication", h: pageH.Publish},
-		route{pattern: "DELETE /api/admin/pages/{id}/publication", h: pageH.Unpublish},
-
 		route{pattern: "GET /api/admin/tags", h: postH.AdminTags},
+		route{pattern: "GET /api/admin/series", h: postH.AdminSeriesList},
+		route{pattern: "GET /api/admin/series/{id}", h: postH.AdminSeries},
+		route{pattern: "GET /api/admin/media", h: mediaH.List},
+		route{pattern: "GET /api/admin/media/{id}", h: mediaH.Get},
+		route{pattern: "GET /api/admin/settings", h: settingsH.Get},
+	)
+	register("no-store", authH.Require(auth.ScopeContentWrite),
+		route{pattern: "POST /api/admin/render", h: contentH.Preview, maxBody: content.MaxRequestBody},
+		route{pattern: "POST /api/admin/posts", h: postH.Create, maxBody: content.MaxRequestBody},
+		route{pattern: "PUT /api/admin/posts/{id}", h: postH.Update, maxBody: content.MaxRequestBody},
+		route{pattern: "POST /api/admin/pages", h: pageH.Create, maxBody: content.MaxRequestBody},
+		route{pattern: "PUT /api/admin/pages/{id}", h: pageH.Update, maxBody: content.MaxRequestBody},
 		route{pattern: "POST /api/admin/tags", h: postH.CreateTag},
 		route{pattern: "PATCH /api/admin/tags/{id}", h: postH.UpdateTag},
 		route{pattern: "DELETE /api/admin/tags/{id}", h: postH.DeleteTag},
-
-		route{pattern: "GET /api/admin/series", h: postH.AdminSeriesList},
 		route{pattern: "POST /api/admin/series", h: postH.CreateSeries},
-		route{pattern: "GET /api/admin/series/{id}", h: postH.AdminSeries},
 		route{pattern: "PATCH /api/admin/series/{id}", h: postH.UpdateSeries},
 		route{pattern: "DELETE /api/admin/series/{id}", h: postH.DeleteSeries},
 		route{pattern: "PUT /api/admin/series/{id}/posts", h: postH.ReorderSeries},
-
-		route{pattern: "GET /api/admin/media", h: mediaH.List},
+	)
+	register("no-store", authH.Require(auth.ScopeContentPublish),
+		route{pattern: "DELETE /api/admin/posts/{id}", h: postH.Delete},
+		route{pattern: "PUT /api/admin/posts/{id}/publication", h: postH.Publish},
+		route{pattern: "DELETE /api/admin/posts/{id}/publication", h: postH.Unpublish},
+		route{pattern: "DELETE /api/admin/pages/{id}", h: pageH.Delete},
+		route{pattern: "PUT /api/admin/pages/{id}/publication", h: pageH.Publish},
+		route{pattern: "DELETE /api/admin/pages/{id}/publication", h: pageH.Unpublish},
+	)
+	register("no-store", authH.Require(auth.ScopeMediaWrite),
 		route{pattern: "POST /api/admin/media", h: mediaH.Upload, maxBody: media.MaxUploadBody},
-		route{pattern: "GET /api/admin/media/{id}", h: mediaH.Get},
 		route{pattern: "PATCH /api/admin/media/{id}", h: mediaH.Update},
 		route{pattern: "DELETE /api/admin/media/{id}", h: mediaH.Delete},
-
-		route{pattern: "GET /api/admin/settings", h: settingsH.Get},
+	)
+	register("no-store", authH.Require(auth.ScopeSettingsWrite),
 		route{pattern: "PATCH /api/admin/settings", h: settingsH.Update},
 	)
 
@@ -151,7 +160,6 @@ func (a *App) routes(authH *auth.Handler, contentH *content.Handler, postH *post
 
 	// 全局中间件自下而上包裹，请求按相反顺序经过：先分配请求 ID，最后才进入路由。
 	var h http.Handler = httpx.Problems(mux)
-	h = httpx.SameOrigin(a.cfg.SiteURL, h)
 	h = httpx.Recover(h)
 	h = httpx.AccessLog(h)
 	h = httpx.RealIP(a.cfg.TrustProxy, h)

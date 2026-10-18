@@ -38,6 +38,7 @@ type client struct {
 	t      *testing.T
 	h      http.Handler
 	cookie string
+	bearer string // 设置后以 API 令牌鉴权，不附带浏览器的跨站校验头
 }
 
 type response struct {
@@ -75,7 +76,9 @@ type hdr map[string]string
 
 func (c *client) send(req *http.Request, headers hdr) response {
 	c.t.Helper()
-	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+	if c.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	} else if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		req.Header.Set("Origin", siteURL)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 	}
