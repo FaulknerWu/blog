@@ -72,7 +72,9 @@ WHERE (sqlc.narg(state)::text IS NULL
   AND (sqlc.narg(title_pattern)::text IS NULL OR p.title ILIKE sqlc.narg(title_pattern)::text)
   AND (sqlc.narg(tag_id)::bigint IS NULL OR EXISTS (
         SELECT 1 FROM post_tags pt WHERE pt.post_id = p.id AND pt.tag_id = sqlc.narg(tag_id)::bigint))
-  AND (sqlc.narg(renderer_version_not)::text IS NULL OR p.renderer_version <> sqlc.narg(renderer_version_not)::text)
+  AND (sqlc.narg(slug)::text IS NULL OR p.slug = sqlc.narg(slug)::text)
+  AND (sqlc.narg(stale_against)::text IS NULL
+       OR (p.renderer_version <> '' AND p.renderer_version <> sqlc.narg(stale_against)::text))
   AND (sqlc.narg(cursor_ts)::timestamptz IS NULL
        OR (p.updated_at, p.id) < (sqlc.narg(cursor_ts)::timestamptz, sqlc.narg(cursor_id)::bigint))
 ORDER BY p.updated_at DESC, p.id DESC
@@ -157,3 +159,15 @@ DELETE FROM post_media WHERE post_id = @post_id;
 INSERT INTO post_media (post_id, media_id)
 SELECT @post_id, unnest(@media_ids::bigint[])
 ON CONFLICT DO NOTHING;
+
+-- name: ListStalePosts :many
+SELECT id, body_md, version
+FROM posts
+WHERE renderer_version <> '' AND renderer_version <> @current::text
+ORDER BY id;
+
+-- name: UpdatePostRendered :execrows
+UPDATE posts
+SET body_html = @body_html, toc = @toc, plain_text = @plain_text, word_count = @word_count,
+    has_math = @has_math, renderer_version = @renderer_version, version = version + 1, updated_at = now()
+WHERE id = @id AND version = @version;

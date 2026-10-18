@@ -336,21 +336,24 @@ WHERE ($1::text IS NULL
   AND ($2::text IS NULL OR p.title ILIKE $2::text)
   AND ($3::bigint IS NULL OR EXISTS (
         SELECT 1 FROM post_tags pt WHERE pt.post_id = p.id AND pt.tag_id = $3::bigint))
-  AND ($4::text IS NULL OR p.renderer_version <> $4::text)
-  AND ($5::timestamptz IS NULL
-       OR (p.updated_at, p.id) < ($5::timestamptz, $6::bigint))
+  AND ($4::text IS NULL OR p.slug = $4::text)
+  AND ($5::text IS NULL
+       OR (p.renderer_version <> '' AND p.renderer_version <> $5::text))
+  AND ($6::timestamptz IS NULL
+       OR (p.updated_at, p.id) < ($6::timestamptz, $7::bigint))
 ORDER BY p.updated_at DESC, p.id DESC
-LIMIT $7
+LIMIT $8
 `
 
 type ListAdminPostsParams struct {
-	State              *string
-	TitlePattern       *string
-	TagID              *int64
-	RendererVersionNot *string
-	CursorTs           *time.Time
-	CursorID           *int64
-	Lim                int32
+	State        *string
+	TitlePattern *string
+	TagID        *int64
+	Slug         *string
+	StaleAgainst *string
+	CursorTs     *time.Time
+	CursorID     *int64
+	Lim          int32
 }
 
 type ListAdminPostsRow struct {
@@ -373,7 +376,8 @@ func (q *Queries) ListAdminPosts(ctx context.Context, arg ListAdminPostsParams) 
 		arg.State,
 		arg.TitlePattern,
 		arg.TagID,
-		arg.RendererVersionNot,
+		arg.Slug,
+		arg.StaleAgainst,
 		arg.CursorTs,
 		arg.CursorID,
 		arg.Lim,
@@ -471,6 +475,39 @@ func (q *Queries) ListPublishedPosts(ctx context.Context, arg ListPublishedPosts
 			&i.SeriesSlug,
 			&i.SeriesTitle,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStalePosts = `-- name: ListStalePosts :many
+SELECT id, body_md, version
+FROM posts
+WHERE renderer_version <> '' AND renderer_version <> $1::text
+ORDER BY id
+`
+
+type ListStalePostsRow struct {
+	ID      int64
+	BodyMd  string
+	Version int32
+}
+
+func (q *Queries) ListStalePosts(ctx context.Context, current string) ([]ListStalePostsRow, error) {
+	rows, err := q.db.Query(ctx, listStalePosts, current)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStalePostsRow
+	for rows.Next() {
+		var i ListStalePostsRow
+		if err := rows.Scan(&i.ID, &i.BodyMd, &i.Version); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -662,6 +699,41 @@ func (q *Queries) UpdatePostContent(ctx context.Context, arg UpdatePostContentPa
 		arg.ID,
 	)
 	return err
+}
+
+const updatePostRendered = `-- name: UpdatePostRendered :execrows
+UPDATE posts
+SET body_html = $1, toc = $2, plain_text = $3, word_count = $4,
+    has_math = $5, renderer_version = $6, version = version + 1, updated_at = now()
+WHERE id = $7 AND version = $8
+`
+
+type UpdatePostRenderedParams struct {
+	BodyHtml        string
+	Toc             json.RawMessage
+	PlainText       string
+	WordCount       int32
+	HasMath         bool
+	RendererVersion string
+	ID              int64
+	Version         int32
+}
+
+func (q *Queries) UpdatePostRendered(ctx context.Context, arg UpdatePostRenderedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePostRendered,
+		arg.BodyHtml,
+		arg.Toc,
+		arg.PlainText,
+		arg.WordCount,
+		arg.HasMath,
+		arg.RendererVersion,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertSlugHistory = `-- name: UpsertSlugHistory :exec

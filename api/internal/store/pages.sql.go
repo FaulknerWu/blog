@@ -157,9 +157,16 @@ func (q *Queries) InsertPageMedia(ctx context.Context, arg InsertPageMediaParams
 const listAdminPages = `-- name: ListAdminPages :many
 SELECT id, slug, title, status, renderer_version, version, created_at, updated_at
 FROM pages
-WHERE $1::text IS NULL OR renderer_version <> $1::text
+WHERE ($1::text IS NULL OR slug = $1::text)
+  AND ($2::text IS NULL
+       OR (renderer_version <> '' AND renderer_version <> $2::text))
 ORDER BY updated_at DESC, id DESC
 `
+
+type ListAdminPagesParams struct {
+	Slug         *string
+	StaleAgainst *string
+}
 
 type ListAdminPagesRow struct {
 	ID              int64
@@ -172,8 +179,8 @@ type ListAdminPagesRow struct {
 	UpdatedAt       time.Time
 }
 
-func (q *Queries) ListAdminPages(ctx context.Context, rendererVersionNot *string) ([]ListAdminPagesRow, error) {
-	rows, err := q.db.Query(ctx, listAdminPages, rendererVersionNot)
+func (q *Queries) ListAdminPages(ctx context.Context, arg ListAdminPagesParams) ([]ListAdminPagesRow, error) {
+	rows, err := q.db.Query(ctx, listAdminPages, arg.Slug, arg.StaleAgainst)
 	if err != nil {
 		return nil, err
 	}
@@ -191,6 +198,39 @@ func (q *Queries) ListAdminPages(ctx context.Context, rendererVersionNot *string
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStalePages = `-- name: ListStalePages :many
+SELECT id, body_md, version
+FROM pages
+WHERE renderer_version <> '' AND renderer_version <> $1::text
+ORDER BY id
+`
+
+type ListStalePagesRow struct {
+	ID      int64
+	BodyMd  string
+	Version int32
+}
+
+func (q *Queries) ListStalePages(ctx context.Context, current string) ([]ListStalePagesRow, error) {
+	rows, err := q.db.Query(ctx, listStalePages, current)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListStalePagesRow
+	for rows.Next() {
+		var i ListStalePagesRow
+		if err := rows.Scan(&i.ID, &i.BodyMd, &i.Version); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -294,6 +334,39 @@ func (q *Queries) UpdatePageContent(ctx context.Context, arg UpdatePageContentPa
 		arg.ID,
 	)
 	return err
+}
+
+const updatePageRendered = `-- name: UpdatePageRendered :execrows
+UPDATE pages
+SET body_html = $1, toc = $2, plain_text = $3, has_math = $4,
+    renderer_version = $5, version = version + 1, updated_at = now()
+WHERE id = $6 AND version = $7
+`
+
+type UpdatePageRenderedParams struct {
+	BodyHtml        string
+	Toc             json.RawMessage
+	PlainText       string
+	HasMath         bool
+	RendererVersion string
+	ID              int64
+	Version         int32
+}
+
+func (q *Queries) UpdatePageRendered(ctx context.Context, arg UpdatePageRenderedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePageRendered,
+		arg.BodyHtml,
+		arg.Toc,
+		arg.PlainText,
+		arg.HasMath,
+		arg.RendererVersion,
+		arg.ID,
+		arg.Version,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertPageSlugHistory = `-- name: UpsertPageSlugHistory :exec

@@ -77,6 +77,17 @@ func defaultVariant(vs []Variant) (Variant, bool) {
 	return best, true
 }
 
+func newImage(sha string, width, height int32, alt string, variants json.RawMessage) Image {
+	return Image{
+		Sha256:   sha,
+		Width:    width,
+		Height:   height,
+		Alt:      alt,
+		Src:      srcURL(sha),
+		Variants: variantsJSON(sha, decodeVariants(variants)),
+	}
+}
+
 func LoadImages(ctx context.Context, q *store.Queries, ids []int64) (map[int64]Image, error) {
 	out := make(map[int64]Image, len(ids))
 	if len(ids) == 0 {
@@ -87,16 +98,33 @@ func LoadImages(ctx context.Context, q *store.Queries, ids []int64) (map[int64]I
 		return nil, err
 	}
 	for _, r := range rows {
-		out[r.ID] = Image{
-			Sha256:   r.Sha256,
-			Width:    r.Width,
-			Height:   r.Height,
-			Alt:      r.Alt,
-			Src:      srcURL(r.Sha256),
-			Variants: variantsJSON(r.Sha256, decodeVariants(r.Variants)),
-		}
+		out[r.ID] = newImage(r.Sha256, r.Width, r.Height, r.Alt, r.Variants)
 	}
 	return out, nil
+}
+
+// LoadImagesBySHA256 按哈希查询图片，返回以 sha256 为键的图片信息及其中存在的媒体 ID（按 shas 顺序）。
+func LoadImagesBySHA256(ctx context.Context, q *store.Queries, shas []string) (map[string]Image, []int64, error) {
+	images := make(map[string]Image, len(shas))
+	if len(shas) == 0 {
+		return images, nil, nil
+	}
+	rows, err := q.ListImagesBySHA256(ctx, shas)
+	if err != nil {
+		return nil, nil, err
+	}
+	idOf := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		images[r.Sha256] = newImage(r.Sha256, r.Width, r.Height, r.Alt, r.Variants)
+		idOf[r.Sha256] = r.ID
+	}
+	ids := make([]int64, 0, len(rows))
+	for _, sha := range shas {
+		if id, ok := idOf[sha]; ok {
+			ids = append(ids, id)
+		}
+	}
+	return images, ids, nil
 }
 
 // ExtractRefs 按出现顺序提取正文中去重后的 /media/{sha256} 引用。

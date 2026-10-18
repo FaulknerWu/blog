@@ -14,6 +14,7 @@ import (
 	"blog/api/internal/media"
 	"blog/api/internal/page"
 	"blog/api/internal/post"
+	"blog/api/internal/render"
 	"blog/api/internal/settings"
 	"blog/api/internal/store"
 )
@@ -24,6 +25,7 @@ type App struct {
 	cfg     Config
 	store   *store.Store
 	auth    *auth.Service
+	content *content.Service
 	handler http.Handler
 }
 
@@ -33,11 +35,13 @@ func New(cfg Config, s *store.Store) (*App, error) {
 		return nil, err
 	}
 	authSvc := auth.NewService(s)
-	a := &App{cfg: cfg, store: s, auth: authSvc}
+	contentSvc := content.NewService(s, render.NewClient(cfg.RenderURL))
+	a := &App{cfg: cfg, store: s, auth: authSvc, content: contentSvc}
 	a.handler = a.routes(
 		auth.NewHandler(authSvc),
-		post.NewHandler(post.NewService(s), s),
-		page.NewHandler(page.NewService(s), s),
+		content.NewHandler(contentSvc),
+		post.NewHandler(post.NewService(s, contentSvc), s),
+		page.NewHandler(page.NewService(s, contentSvc), s),
 		media.NewHandler(media.NewService(s, files, cfg.ImageWorkers)),
 		feed.NewHandler(s, feed.Config{SiteURL: cfg.SiteURL}),
 		settings.NewHandler(s),
@@ -47,7 +51,7 @@ func New(cfg Config, s *store.Store) (*App, error) {
 
 func (a *App) Handler() http.Handler { return a.handler }
 
-func (a *App) routes(authH *auth.Handler, postH *post.Handler, pageH *page.Handler, mediaH *media.Handler, feedH *feed.Handler, settingsH *settings.Handler) http.Handler {
+func (a *App) routes(authH *auth.Handler, contentH *content.Handler, postH *post.Handler, pageH *page.Handler, mediaH *media.Handler, feedH *feed.Handler, settingsH *settings.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	type route struct {
@@ -94,6 +98,9 @@ func (a *App) routes(authH *auth.Handler, postH *post.Handler, pageH *page.Handl
 	)
 
 	register("no-store", authH.Require,
+		route{pattern: "GET /api/admin/render", h: contentH.Renderer},
+		route{pattern: "POST /api/admin/render", h: contentH.Preview, maxBody: content.MaxRequestBody},
+
 		route{pattern: "GET /api/admin/posts", h: postH.AdminList},
 		route{pattern: "POST /api/admin/posts", h: postH.Create, maxBody: content.MaxRequestBody},
 		route{pattern: "GET /api/admin/posts/{id}", h: postH.Get},
@@ -182,6 +189,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	go a.sessionJanitor(ctx)
+	go a.rerenderStale(ctx)
 
 	errc := make(chan error, 1)
 	go func() {
@@ -202,6 +210,31 @@ func (a *App) Run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// rerenderStale 在启动后用当前渲染器重新渲染过期内容。渲染服务可能晚于 API 就绪，失败时退避重试。
+func (a *App) rerenderStale(ctx context.Context) {
+	delay := 2 * time.Second
+	for {
+		report, err := a.content.Rerender(ctx)
+		if err == nil {
+			if report.Posts+report.Pages+report.Failed > 0 {
+				slog.Info("rerendered stale content", "renderer_version", report.RendererVersion,
+					"posts", report.Posts, "pages", report.Pages, "failed", report.Failed)
+			}
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Warn("rerender stale content", "err", err, "retry_in", delay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 5*time.Minute)
+	}
 }
 
 // sessionJanitor 启动时及之后每小时清理一次过期会话，直到 ctx 取消。

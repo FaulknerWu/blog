@@ -12,7 +12,9 @@ WHERE h.old_slug = @old_slug AND p.status = 'published';
 -- name: ListAdminPages :many
 SELECT id, slug, title, status, renderer_version, version, created_at, updated_at
 FROM pages
-WHERE sqlc.narg(renderer_version_not)::text IS NULL OR renderer_version <> sqlc.narg(renderer_version_not)::text
+WHERE (sqlc.narg(slug)::text IS NULL OR slug = sqlc.narg(slug)::text)
+  AND (sqlc.narg(stale_against)::text IS NULL
+       OR (renderer_version <> '' AND renderer_version <> sqlc.narg(stale_against)::text))
 ORDER BY updated_at DESC, id DESC;
 
 -- name: GetAdminPage :one
@@ -58,3 +60,15 @@ DELETE FROM page_media WHERE page_id = @page_id;
 INSERT INTO page_media (page_id, media_id)
 SELECT @page_id, unnest(@media_ids::bigint[])
 ON CONFLICT DO NOTHING;
+
+-- name: ListStalePages :many
+SELECT id, body_md, version
+FROM pages
+WHERE renderer_version <> '' AND renderer_version <> @current::text
+ORDER BY id;
+
+-- name: UpdatePageRendered :execrows
+UPDATE pages
+SET body_html = @body_html, toc = @toc, plain_text = @plain_text, has_math = @has_math,
+    renderer_version = @renderer_version, version = version + 1, updated_at = now()
+WHERE id = @id AND version = @version;

@@ -17,11 +17,10 @@ var reservedSlugs = map[string]bool{
 }
 
 type Input struct {
-	Title       string            `json:"title"`
-	Slug        string            `json:"slug"`
-	Description string            `json:"description"`
-	BodyMD      string            `json:"body_md"`
-	Rendered    *content.Rendered `json:"rendered"`
+	Title       string `json:"title"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+	BodyMD      string `json:"body_md"`
 }
 
 type pageContent struct {
@@ -30,40 +29,36 @@ type pageContent struct {
 }
 
 type Service struct {
-	store *store.Store
+	store   *store.Store
+	content *content.Service
 }
 
-func NewService(s *store.Store) *Service { return &Service{store: s} }
+func NewService(s *store.Store, c *content.Service) *Service { return &Service{store: s, content: c} }
 
-func validate(in Input) (*pageContent, error) {
+// prepare 校验字段并渲染正文，字段错误与渲染错误一并返回。
+func (s *Service) prepare(ctx context.Context, in Input) (*pageContent, error) {
 	var v httpx.Validator
 	v.Length("#/title", in.Title, 1, 200)
 	if v.Slug("#/slug", in.Slug, 100) && reservedSlugs[in.Slug] {
 		v.Add("#/slug", "reserved", "该 slug 为站点保留路径")
 	}
 	v.Length("#/description", in.Description, 0, 500)
-	body := content.Validate(&v, in.BodyMD, in.Rendered)
+	body, err := s.content.Prepare(ctx, &v, in.BodyMD)
+	if err != nil {
+		return nil, err
+	}
 	if err := v.Err(); err != nil {
 		return nil, err
 	}
 	return &pageContent{in: in, body: body}, nil
 }
 
-func resolveMedia(ctx context.Context, q *store.Queries, c *pageContent) ([]int64, error) {
-	var v httpx.Validator
-	ids, err := content.ResolveMedia(ctx, q, &v, c.body.MediaRefs)
-	if err != nil {
-		return nil, err
-	}
-	return ids, v.Err()
-}
-
-func writeAssociations(ctx context.Context, q *store.Queries, pageID int64, c *pageContent, mediaIDs []int64, oldSlug string) error {
+func writeAssociations(ctx context.Context, q *store.Queries, pageID int64, c *pageContent, oldSlug string) error {
 	if err := q.DeletePageMedia(ctx, pageID); err != nil {
 		return err
 	}
-	if len(mediaIDs) > 0 {
-		if err := q.InsertPageMedia(ctx, store.InsertPageMediaParams{PageID: pageID, MediaIds: mediaIDs}); err != nil {
+	if len(c.body.MediaIDs) > 0 {
+		if err := q.InsertPageMedia(ctx, store.InsertPageMediaParams{PageID: pageID, MediaIds: c.body.MediaIDs}); err != nil {
 			return err
 		}
 	}
@@ -90,32 +85,28 @@ func mapWriteError(err error) error {
 }
 
 func (s *Service) Create(ctx context.Context, in Input) (int64, error) {
-	c, err := validate(in)
+	c, err := s.prepare(ctx, in)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
 	err = s.store.InTx(ctx, func(q *store.Queries) error {
-		mediaIDs, err := resolveMedia(ctx, q, c)
-		if err != nil {
-			return err
-		}
-		r := c.body.Rendered
+		b := c.body
 		id, err = q.InsertPage(ctx, store.InsertPageParams{
 			Slug:            in.Slug,
 			Title:           in.Title,
 			Description:     in.Description,
 			BodyMd:          in.BodyMD,
-			BodyHtml:        r.HTML,
-			Toc:             c.body.TOC,
-			PlainText:       r.PlainText,
-			HasMath:         r.HasMath,
-			RendererVersion: r.RendererVersion,
+			BodyHtml:        b.HTML,
+			Toc:             b.TOC,
+			PlainText:       b.PlainText,
+			HasMath:         b.HasMath,
+			RendererVersion: b.RendererVersion,
 		})
 		if err != nil {
 			return err
 		}
-		return writeAssociations(ctx, q, id, c, mediaIDs, "")
+		return writeAssociations(ctx, q, id, c, "")
 	})
 	return id, mapWriteError(err)
 }
@@ -138,7 +129,7 @@ func (s *Service) Update(ctx context.Context, id int64, ifMatch httpx.IfMatch, i
 	if err := ifMatch.Require(); err != nil {
 		return err
 	}
-	c, err := validate(in)
+	c, err := s.prepare(ctx, in)
 	if err != nil {
 		return err
 	}
@@ -147,26 +138,22 @@ func (s *Service) Update(ctx context.Context, id int64, ifMatch httpx.IfMatch, i
 		if err != nil {
 			return err
 		}
-		mediaIDs, err := resolveMedia(ctx, q, c)
-		if err != nil {
-			return err
-		}
-		r := c.body.Rendered
+		b := c.body
 		if err := q.UpdatePageContent(ctx, store.UpdatePageContentParams{
 			ID:              id,
 			Slug:            in.Slug,
 			Title:           in.Title,
 			Description:     in.Description,
 			BodyMd:          in.BodyMD,
-			BodyHtml:        r.HTML,
-			Toc:             c.body.TOC,
-			PlainText:       r.PlainText,
-			HasMath:         r.HasMath,
-			RendererVersion: r.RendererVersion,
+			BodyHtml:        b.HTML,
+			Toc:             b.TOC,
+			PlainText:       b.PlainText,
+			HasMath:         b.HasMath,
+			RendererVersion: b.RendererVersion,
 		}); err != nil {
 			return err
 		}
-		return writeAssociations(ctx, q, id, c, mediaIDs, cur.Slug)
+		return writeAssociations(ctx, q, id, c, cur.Slug)
 	})
 	return mapWriteError(err)
 }

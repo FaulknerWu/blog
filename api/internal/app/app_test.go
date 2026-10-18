@@ -27,19 +27,16 @@ func pngImage(t *testing.T, w, h int, seed uint8) []byte {
 	return buf.Bytes()
 }
 
+// postInput 构造文章保存请求；非空正文前加一个二级标题，使渲染结果带一项目录。
 func postInput(title, slug, body string, extra map[string]any) map[string]any {
+	if body != "" {
+		body = "## 背景\n\n" + body
+	}
 	in := map[string]any{
-		"title":   title,
-		"slug":    slug,
-		"summary": "摘要：" + title,
-		"body_md": body,
-		"rendered": map[string]any{
-			"html":             "<h2 id=\"背景\">背景</h2><p>" + body + "</p>",
-			"toc":              []map[string]any{{"depth": 2, "id": "背景", "text": "背景"}},
-			"plain_text":       "背景 " + body,
-			"has_math":         false,
-			"renderer_version": "2026.10.0",
-		},
+		"title":          title,
+		"slug":           slug,
+		"summary":        "摘要：" + title,
+		"body_md":        body,
 		"tag_ids":        []int64{},
 		"series_id":      nil,
 		"cover_media_id": nil,
@@ -167,9 +164,12 @@ func TestPostLifecycle(t *testing.T) {
 	if !strings.Contains(r.Body.String(), "#/tag_ids/1") {
 		t.Fatalf("expected #/tag_ids/1 not_found: %s", r.Body)
 	}
-	noRendered := postInput("标题", "ok-slug", "正文", nil)
-	delete(noRendered, "rendered")
-	c.do("POST", "/api/admin/posts", noRendered).expect(422)
+	clientRendered := postInput("标题", "ok-slug", "正文", map[string]any{"rendered": map[string]any{"html": "<script>"}})
+	c.do("POST", "/api/admin/posts", clientRendered).expect(400)
+	r = c.do("POST", "/api/admin/posts", postInput("标题", "ok-slug", "第一段\n\n$$\\bad$$", nil)).expect(422)
+	if fe := r.json()["errors"].([]any)[0].(map[string]any); fe["pointer"] != "#/body_md" || fe["code"] != "render_error" || num(fe["line"]) != 5 {
+		t.Fatalf("render error should point at the Markdown line: %s", r.Body)
+	}
 	c.do("POST", "/api/admin/posts", `{"title":"x","slug":"x","unknown":true}`).expect(400)
 	c.do("POST", "/api/admin/posts", "{}", hdr{"Content-Type": "text/plain"}).expect(415)
 
@@ -210,7 +210,7 @@ func TestPostLifecycle(t *testing.T) {
 		t.Fatalf("update: %v %s", r.Header(), r.Body)
 	}
 
-	empty := c.do("POST", "/api/admin/posts", postInput("空文章", "empty", "", map[string]any{"rendered": nil})).expect(201).json()
+	empty := c.do("POST", "/api/admin/posts", postInput("空文章", "empty", "", nil)).expect(201).json()
 	c.do("PUT", fmt.Sprintf("/api/admin/posts/%d/publication", num(empty["id"])), nil, hdr{"If-Match": `"v1"`}).expect(422)
 
 	r = c.do("PUT", path+"/publication", nil, hdr{"If-Match": `"v2"`}).expect(200)
@@ -420,9 +420,8 @@ func TestMediaAndFeeds(t *testing.T) {
 	missing := strings.Repeat("b", 64)
 	c.do("POST", "/api/admin/posts", postInput("图文", "with-image", "![x](/media/"+missing+")", nil)).expect(422)
 
-	body := "![部署拓扑](/media/" + sha + ")\n\n正文段落"
+	body := "![部署拓扑](/media/" + sha + ")\n\n[站内链接](/posts/other) [外链](https://example.org/x)"
 	in := postInput("图文", "with-image", body, map[string]any{"cover_media_id": mediaID})
-	in["rendered"].(map[string]any)["html"] = `<p><img src="/media/` + sha + `" srcset="/media/` + sha + `/480.webp 480w, /media/` + sha + `/960.webp 960w" alt="x"></p><p><a href="/posts/other">站内链接</a> <a href="https://example.org/x">外链</a></p>`
 	p := c.do("POST", "/api/admin/posts", in).expect(201).json()
 	postPath := fmt.Sprintf("/api/admin/posts/%d", num(p["id"]))
 	c.do("PUT", postPath+"/publication", nil, hdr{"If-Match": `"v1"`}).expect(200)

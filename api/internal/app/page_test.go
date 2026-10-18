@@ -12,13 +12,6 @@ func pageInput(title, slug, body string, extra map[string]any) map[string]any {
 		"slug":        slug,
 		"description": "描述：" + title,
 		"body_md":     body,
-		"rendered": map[string]any{
-			"html":             "<p>" + body + "</p>",
-			"toc":              []map[string]any{},
-			"plain_text":       body,
-			"has_math":         false,
-			"renderer_version": "2026.10.0",
-		},
 	}
 	for k, v := range extra {
 		in[k] = v
@@ -50,7 +43,7 @@ func TestPageLifecycle(t *testing.T) {
 	}
 	pagePath := fmt.Sprintf("/api/admin/pages/%d", num(p["id"]))
 	c.do("POST", "/api/admin/pages", pageInput("另一个", "about", "正文", nil)).expect(409)
-	empty := c.do("POST", "/api/admin/pages", pageInput("空页面", "empty", "", map[string]any{"rendered": nil})).expect(201).json()
+	empty := c.do("POST", "/api/admin/pages", pageInput("空页面", "empty", "", nil)).expect(201).json()
 
 	c.do("GET", "/api/pages/about", nil).expect(404)
 	c.do("PUT", pagePath+"/publication", nil).expect(428)
@@ -65,7 +58,8 @@ func TestPageLifecycle(t *testing.T) {
 	}
 
 	pub := c.do("GET", "/api/pages/about", nil).expect(200).json()
-	if pub["title"] != "关于" || pub["description"] != "描述：关于" || !strings.Contains(pub["html"].(string), body) {
+	if pub["title"] != "关于" || pub["description"] != "描述：关于" ||
+		!strings.Contains(pub["html"].(string), "关于本站的独特介绍") || !strings.Contains(pub["html"].(string), `<img src="/media/`+sha+`"`) {
 		t.Fatalf("public page: %v", pub)
 	}
 	for _, k := range []string{"published_at", "tags", "series", "adjacent", "cover"} {
@@ -114,8 +108,11 @@ func TestPageLifecycle(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("admin pages: %v", list)
 	}
-	if stale := c.do("GET", "/api/admin/pages?renderer_version_not=2026.10.0", nil).expect(200).json()["items"].([]any); len(stale) != 1 {
-		t.Fatalf("renderer_version_not should match only the page without rendered output: %v", stale)
+	if stale := c.do("GET", "/api/admin/pages?stale=true", nil).expect(200).json()["items"].([]any); len(stale) != 0 {
+		t.Fatalf("nothing should be stale yet: %v", stale)
+	}
+	if bySlug := c.do("GET", "/api/admin/pages?slug=about-me", nil).expect(200).json()["items"].([]any); len(bySlug) != 1 {
+		t.Fatalf("slug filter: %v", bySlug)
 	}
 
 	c.do("DELETE", pagePath+"/publication", nil, hdr{"If-Match": `"v3"`}).expect(200)

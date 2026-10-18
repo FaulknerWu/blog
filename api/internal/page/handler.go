@@ -59,7 +59,18 @@ func toAdminPage(r store.GetAdminPageRow) adminPage {
 }
 
 func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) error {
-	rows, err := h.store.ListAdminPages(r.Context(), httpx.QueryString(r, "renderer_version_not"))
+	stale, err := httpx.QueryBool(r, "stale")
+	if err != nil {
+		return err
+	}
+	staleAgainst, err := h.svc.content.StaleAgainst(r.Context(), stale)
+	if err != nil {
+		return err
+	}
+	rows, err := h.store.ListAdminPages(r.Context(), store.ListAdminPagesParams{
+		Slug:         httpx.QueryString(r, "slug"),
+		StaleAgainst: staleAgainst,
+	})
 	if err != nil {
 		return err
 	}

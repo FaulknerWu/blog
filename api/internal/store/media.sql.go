@@ -158,6 +158,46 @@ func (q *Queries) ListImages(ctx context.Context, ids []int64) ([]ListImagesRow,
 	return items, nil
 }
 
+const listImagesBySHA256 = `-- name: ListImagesBySHA256 :many
+SELECT id, sha256, width, height, alt, variants FROM media WHERE sha256 = ANY($1::text[])
+`
+
+type ListImagesBySHA256Row struct {
+	ID       int64
+	Sha256   string
+	Width    int32
+	Height   int32
+	Alt      string
+	Variants json.RawMessage
+}
+
+func (q *Queries) ListImagesBySHA256(ctx context.Context, sha256s []string) ([]ListImagesBySHA256Row, error) {
+	rows, err := q.db.Query(ctx, listImagesBySHA256, sha256s)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListImagesBySHA256Row
+	for rows.Next() {
+		var i ListImagesBySHA256Row
+		if err := rows.Scan(
+			&i.ID,
+			&i.Sha256,
+			&i.Width,
+			&i.Height,
+			&i.Alt,
+			&i.Variants,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMedia = `-- name: ListMedia :many
 SELECT m.id, m.sha256, m.width, m.height, m.byte_size, m.variants, m.original_filename, m.alt, m.version, m.created_at, m.updated_at,
        (SELECT count(*) FROM media_references r WHERE r.media_id = m.id)::int AS reference_count
@@ -275,35 +315,6 @@ func (q *Queries) ListMediaBySHA256(ctx context.Context, sha256s []string) ([]Li
 			&i.UpdatedAt,
 			&i.ReferenceCount,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listMediaIDsBySHA256 = `-- name: ListMediaIDsBySHA256 :many
-SELECT id, sha256 FROM media WHERE sha256 = ANY($1::text[])
-`
-
-type ListMediaIDsBySHA256Row struct {
-	ID     int64
-	Sha256 string
-}
-
-func (q *Queries) ListMediaIDsBySHA256(ctx context.Context, sha256s []string) ([]ListMediaIDsBySHA256Row, error) {
-	rows, err := q.db.Query(ctx, listMediaIDsBySHA256, sha256s)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListMediaIDsBySHA256Row
-	for rows.Next() {
-		var i ListMediaIDsBySHA256Row
-		if err := rows.Scan(&i.ID, &i.Sha256); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

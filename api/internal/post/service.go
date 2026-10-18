@@ -15,14 +15,13 @@ import (
 const maxTags = 10
 
 type PostInput struct {
-	Title        string            `json:"title"`
-	Slug         string            `json:"slug"`
-	Summary      string            `json:"summary"`
-	BodyMD       string            `json:"body_md"`
-	Rendered     *content.Rendered `json:"rendered"`
-	TagIDs       []int64           `json:"tag_ids"`
-	SeriesID     *int64            `json:"series_id"`
-	CoverMediaID *int64            `json:"cover_media_id"`
+	Title        string  `json:"title"`
+	Slug         string  `json:"slug"`
+	Summary      string  `json:"summary"`
+	BodyMD       string  `json:"body_md"`
+	TagIDs       []int64 `json:"tag_ids"`
+	SeriesID     *int64  `json:"series_id"`
+	CoverMediaID *int64  `json:"cover_media_id"`
 }
 
 type postContent struct {
@@ -32,17 +31,22 @@ type postContent struct {
 }
 
 type Service struct {
-	store *store.Store
+	store   *store.Store
+	content *content.Service
 }
 
-func NewService(s *store.Store) *Service { return &Service{store: s} }
+func NewService(s *store.Store, c *content.Service) *Service { return &Service{store: s, content: c} }
 
-func validate(in PostInput) (*postContent, error) {
+// prepare 校验字段并渲染正文，字段错误与渲染错误一并返回。渲染在事务之外进行，避免长时间持有行锁。
+func (s *Service) prepare(ctx context.Context, in PostInput) (*postContent, error) {
 	var v httpx.Validator
 	v.Length("#/title", in.Title, 1, 200)
 	v.Slug("#/slug", in.Slug, 100)
 	v.Length("#/summary", in.Summary, 0, 500)
-	body := content.Validate(&v, in.BodyMD, in.Rendered)
+	body, err := s.content.Prepare(ctx, &v, in.BodyMD)
+	if err != nil {
+		return nil, err
+	}
 	tagIDs := slices.Compact(slices.Sorted(slices.Values(in.TagIDs)))
 	if len(tagIDs) > maxTags {
 		v.Add("#/tag_ids", "too_many", fmt.Sprintf("标签不能超过 %d 个", maxTags))
@@ -56,14 +60,14 @@ func validate(in PostInput) (*postContent, error) {
 	return &postContent{in: in, body: body, tagIDs: tagIDs}, nil
 }
 
-// resolveRefs 在事务内校验标签、专栏、封面与正文图片是否存在，返回正文引用的媒体 ID。
+// resolveRefs 在事务内校验标签、专栏与封面是否存在。正文图片已在渲染时校验。
 // joiningSeries 为 true 时锁定目标专栏行，使同一专栏的 NextSeriesPosition 串行执行。
-func resolveRefs(ctx context.Context, q *store.Queries, c *postContent, joiningSeries bool) ([]int64, error) {
+func resolveRefs(ctx context.Context, q *store.Queries, c *postContent, joiningSeries bool) error {
 	var v httpx.Validator
 	if len(c.tagIDs) > 0 {
 		found, err := q.ListTagIDs(ctx, c.tagIDs)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for i, id := range c.in.TagIDs {
 			if !slices.Contains(found, id) {
@@ -75,26 +79,22 @@ func resolveRefs(ctx context.Context, q *store.Queries, c *postContent, joiningS
 		if _, err := q.LockSeries(ctx, *c.in.SeriesID); store.IsNotFound(err) {
 			v.Add("#/series_id", "not_found", "专栏不存在")
 		} else if err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if c.in.CoverMediaID != nil {
 		ok, err := q.MediaExists(ctx, *c.in.CoverMediaID)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !ok {
 			v.Add("#/cover_media_id", "not_found", "封面图片不存在")
 		}
 	}
-	mediaIDs, err := content.ResolveMedia(ctx, q, &v, c.body.MediaRefs)
-	if err != nil {
-		return nil, err
-	}
-	return mediaIDs, v.Err()
+	return v.Err()
 }
 
-func writeAssociations(ctx context.Context, q *store.Queries, postID int64, c *postContent, mediaIDs []int64, oldSlug string) error {
+func writeAssociations(ctx context.Context, q *store.Queries, postID int64, c *postContent, oldSlug string) error {
 	if err := q.DeletePostTags(ctx, postID); err != nil {
 		return err
 	}
@@ -106,8 +106,8 @@ func writeAssociations(ctx context.Context, q *store.Queries, postID int64, c *p
 	if err := q.DeletePostMedia(ctx, postID); err != nil {
 		return err
 	}
-	if len(mediaIDs) > 0 {
-		if err := q.InsertPostMedia(ctx, store.InsertPostMediaParams{PostID: postID, MediaIds: mediaIDs}); err != nil {
+	if len(c.body.MediaIDs) > 0 {
+		if err := q.InsertPostMedia(ctx, store.InsertPostMediaParams{PostID: postID, MediaIds: c.body.MediaIDs}); err != nil {
 			return err
 		}
 	}
@@ -146,14 +146,13 @@ func mapWriteError(err error) error {
 }
 
 func (s *Service) Create(ctx context.Context, in PostInput) (int64, error) {
-	c, err := validate(in)
+	c, err := s.prepare(ctx, in)
 	if err != nil {
 		return 0, err
 	}
 	var id int64
 	err = s.store.InTx(ctx, func(q *store.Queries) error {
-		mediaIDs, err := resolveRefs(ctx, q, c, true)
-		if err != nil {
+		if err := resolveRefs(ctx, q, c, true); err != nil {
 			return err
 		}
 		var pos *int32
@@ -164,18 +163,18 @@ func (s *Service) Create(ctx context.Context, in PostInput) (int64, error) {
 			}
 			pos = &p
 		}
-		r := c.body.Rendered
+		b := c.body
 		id, err = q.InsertPost(ctx, store.InsertPostParams{
 			Slug:            in.Slug,
 			Title:           in.Title,
 			Summary:         in.Summary,
 			BodyMd:          in.BodyMD,
-			BodyHtml:        r.HTML,
-			Toc:             c.body.TOC,
-			PlainText:       r.PlainText,
-			WordCount:       c.body.WordCount,
-			HasMath:         r.HasMath,
-			RendererVersion: r.RendererVersion,
+			BodyHtml:        b.HTML,
+			Toc:             b.TOC,
+			PlainText:       b.PlainText,
+			WordCount:       b.WordCount,
+			HasMath:         b.HasMath,
+			RendererVersion: b.RendererVersion,
 			CoverMediaID:    in.CoverMediaID,
 			SeriesID:        in.SeriesID,
 			SeriesPosition:  pos,
@@ -183,7 +182,7 @@ func (s *Service) Create(ctx context.Context, in PostInput) (int64, error) {
 		if err != nil {
 			return err
 		}
-		return writeAssociations(ctx, q, id, c, mediaIDs, "")
+		return writeAssociations(ctx, q, id, c, "")
 	})
 	return id, mapWriteError(err)
 }
@@ -206,7 +205,7 @@ func (s *Service) Update(ctx context.Context, id int64, ifMatch httpx.IfMatch, i
 	if err := ifMatch.Require(); err != nil {
 		return err
 	}
-	c, err := validate(in)
+	c, err := s.prepare(ctx, in)
 	if err != nil {
 		return err
 	}
@@ -216,8 +215,7 @@ func (s *Service) Update(ctx context.Context, id int64, ifMatch httpx.IfMatch, i
 			return err
 		}
 		joining := in.SeriesID != nil && (cur.SeriesID == nil || *cur.SeriesID != *in.SeriesID)
-		mediaIDs, err := resolveRefs(ctx, q, c, joining)
-		if err != nil {
+		if err := resolveRefs(ctx, q, c, joining); err != nil {
 			return err
 		}
 		// 留在原专栏保持序号，移出专栏清空序号，加入新专栏追加到末尾。
@@ -232,26 +230,26 @@ func (s *Service) Update(ctx context.Context, id int64, ifMatch httpx.IfMatch, i
 			}
 			pos = &p
 		}
-		r := c.body.Rendered
+		b := c.body
 		if err := q.UpdatePostContent(ctx, store.UpdatePostContentParams{
 			ID:              id,
 			Slug:            in.Slug,
 			Title:           in.Title,
 			Summary:         in.Summary,
 			BodyMd:          in.BodyMD,
-			BodyHtml:        r.HTML,
-			Toc:             c.body.TOC,
-			PlainText:       r.PlainText,
-			WordCount:       c.body.WordCount,
-			HasMath:         r.HasMath,
-			RendererVersion: r.RendererVersion,
+			BodyHtml:        b.HTML,
+			Toc:             b.TOC,
+			PlainText:       b.PlainText,
+			WordCount:       b.WordCount,
+			HasMath:         b.HasMath,
+			RendererVersion: b.RendererVersion,
 			CoverMediaID:    in.CoverMediaID,
 			SeriesID:        in.SeriesID,
 			SeriesPosition:  pos,
 		}); err != nil {
 			return err
 		}
-		return writeAssociations(ctx, q, id, c, mediaIDs, cur.Slug)
+		return writeAssociations(ctx, q, id, c, cur.Slug)
 	})
 	return mapWriteError(err)
 }

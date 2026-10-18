@@ -36,6 +36,14 @@ func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Validation(httpx.FieldError{Parameter: "state", Code: "invalid_value",
 			Detail: "取值为 draft、scheduled 或 published"})
 	}
+	stale, err := httpx.QueryBool(r, "stale")
+	if err != nil {
+		return err
+	}
+	staleAgainst, err := h.svc.content.StaleAgainst(r.Context(), stale)
+	if err != nil {
+		return err
+	}
 	var titlePattern *string
 	if q := httpx.QueryString(r, "q"); q != nil {
 		p := httpx.LikePattern(*q)
@@ -43,13 +51,14 @@ func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) error {
 	}
 	ts, id := cursor.Params()
 	rows, err := h.store.ListAdminPosts(r.Context(), store.ListAdminPostsParams{
-		State:              state,
-		TitlePattern:       titlePattern,
-		TagID:              tagID,
-		RendererVersionNot: httpx.QueryString(r, "renderer_version_not"),
-		CursorTs:           ts,
-		CursorID:           id,
-		Lim:                limit + 1,
+		State:        state,
+		TitlePattern: titlePattern,
+		TagID:        tagID,
+		Slug:         httpx.QueryString(r, "slug"),
+		StaleAgainst: staleAgainst,
+		CursorTs:     ts,
+		CursorID:     id,
+		Lim:          limit + 1,
 	})
 	if err != nil {
 		return err

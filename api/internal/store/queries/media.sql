@@ -39,8 +39,8 @@ FROM media_references
 WHERE media_id = @media_id::bigint
 ORDER BY owner_type, owner_id;
 
--- name: ListMediaIDsBySHA256 :many
-SELECT id, sha256 FROM media WHERE sha256 = ANY(@sha256s::text[]);
+-- name: ListImagesBySHA256 :many
+SELECT id, sha256, width, height, alt, variants FROM media WHERE sha256 = ANY(@sha256s::text[]);
 
 -- name: MediaExists :one
 SELECT EXISTS (SELECT 1 FROM media WHERE id = @id);
