@@ -1,0 +1,2294 @@
+openapi: 3.1.0
+info:
+  title: Blog API
+  version: 1.0.0
+  description: |
+    博客系统 HTTP 接口契约，是接口实现、前端类型与 CLI 客户端的唯一事实来源。
+    通用约定（字段命名、时间格式、分页、条件请求、错误结构）见 docs/api-design.md。
+
+    - 请求与响应为 `application/json; charset=utf-8`，错误为 `application/problem+json`（RFC 9457）。
+    - 可选字段无值时显式返回 `null`；请求体包含未定义字段时返回 `400`。
+    - 管理接口接受浏览器会话（`session`）或 API 令牌（`bearer`）。令牌须拥有操作的 `x-scope`；会话拥有全部 scope。
+    - 跨站请求校验（`Sec-Fetch-Site: same-origin` 且 `Origin` 与站点一致）只作用于会话鉴权的非安全方法与登录。
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: /
+    description: 与站点同源，由 Nginx 按路径转发到 API
+tags:
+  - name: public
+    description: 公开内容
+  - name: auth
+    description: 认证、会话与 API 令牌
+  - name: render
+    description: 正文渲染
+  - name: posts
+    description: 文章管理
+  - name: pages
+    description: 页面管理
+  - name: taxonomy
+    description: 标签与专栏管理
+  - name: media
+    description: 媒体管理与图片分发
+  - name: settings
+    description: 站点设置
+  - name: distribution
+    description: 订阅源、Sitemap 与健康检查
+
+security: []
+
+paths:
+  # ───────────────────────── 公开内容 ─────────────────────────
+  /api/posts:
+    get:
+      tags: [public]
+      operationId: listPosts
+      summary: 已发布文章列表
+      description: 按 `published_at` 倒序分页。
+      parameters:
+        - name: tag
+          in: query
+          description: 按标签 slug 筛选
+          schema: { type: string }
+        - $ref: '#/components/parameters/PublicLimit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 文章分页
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostSummaryList' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/posts/{slug}:
+    get:
+      tags: [public]
+      operationId: getPost
+      summary: 已发布文章详情
+      parameters:
+        - $ref: '#/components/parameters/SlugPath'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 文章详情
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+        '301': { $ref: '#/components/responses/MovedPermanently' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/pages/{slug}:
+    get:
+      tags: [public]
+      operationId: getPage
+      summary: 已发布页面详情
+      parameters:
+        - $ref: '#/components/parameters/SlugPath'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 页面详情
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Page' }
+        '301': { $ref: '#/components/responses/MovedPermanently' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/tags:
+    get:
+      tags: [public]
+      operationId: listTags
+      summary: 标签列表
+      description: 只含至少有一篇已发布文章的标签，按名称排序，不分页。
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 标签列表
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TagList' }
+        '304': { $ref: '#/components/responses/NotModified' }
+
+  /api/tags/{slug}:
+    get:
+      tags: [public]
+      operationId: getTag
+      summary: 标签详情
+      parameters:
+        - $ref: '#/components/parameters/SlugPath'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 标签
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tag' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/series:
+    get:
+      tags: [public]
+      operationId: listSeries
+      summary: 专栏列表
+      description: 只含包含已发布文章的专栏，按 `last_published_at` 倒序，不分页。
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 专栏列表
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesList' }
+        '304': { $ref: '#/components/responses/NotModified' }
+
+  /api/series/{slug}:
+    get:
+      tags: [public]
+      operationId: getSeries
+      summary: 专栏详情
+      parameters:
+        - $ref: '#/components/parameters/SlugPath'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 专栏及其已发布文章目录
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeriesDetail' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/search:
+    get:
+      tags: [public]
+      operationId: searchPosts
+      summary: 全文检索
+      description: 按相关度排序，不分页。
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: 去除首尾空白后 1–64 个字符
+          schema: { type: string, maxLength: 64 }
+        - $ref: '#/components/parameters/PublicLimit'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 检索结果
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResults' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/settings:
+    get:
+      tags: [public]
+      operationId: getSiteSettings
+      summary: 公开站点设置
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: 站点设置
+          headers: { ETag: { $ref: '#/components/headers/WeakETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiteSettings' }
+        '304': { $ref: '#/components/responses/NotModified' }
+
+  # ───────────────────────── 认证 ─────────────────────────
+  /api/auth/sessions:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: 登录
+      description: 成功后下发 `__Host-session` Cookie。要求通过跨站请求校验；按客户端 IP 限流。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginInput' }
+      responses:
+        '201':
+          description: 登录成功
+          headers:
+            Set-Cookie:
+              description: '`__Host-session=<token>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=2592000`'
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [auth]
+      operationId: listSessions
+      summary: 活跃会话列表
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: 当前用户的全部活跃会话
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/auth/sessions/current:
+    delete:
+      tags: [auth]
+      operationId: logout
+      summary: 退出登录
+      description: 吊销当前会话并清除 Cookie。
+      security: [{ session: [] }]
+      responses:
+        '204': { description: 已退出 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/auth/sessions/{id}:
+    delete:
+      tags: [auth]
+      operationId: revokeSession
+      summary: 吊销指定会话
+      security: [{ session: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204': { description: 已吊销 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: 当前用户与凭据信息
+      security: [{ session: [] }, { bearer: [] }]
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /api/auth/password:
+    put:
+      tags: [auth]
+      operationId: changePassword
+      summary: 修改密码
+      description: 更新密码并吊销当前会话以外的全部会话；API 令牌不受影响。
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordChange' }
+      responses:
+        '204': { description: 已修改 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/auth/tokens:
+    get:
+      tags: [auth]
+      operationId: listTokens
+      summary: API 令牌列表
+      security: [{ session: [] }]
+      responses:
+        '200':
+          description: 当前用户的全部令牌（含已过期）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [auth]
+      operationId: createToken
+      summary: 签发 API 令牌
+      description: 令牌明文 `secret` 只在本次响应中出现。
+      security: [{ session: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenInput' }
+      responses:
+        '201':
+          description: 已签发
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/auth/tokens/{id}:
+    delete:
+      tags: [auth]
+      operationId: revokeToken
+      summary: 吊销 API 令牌
+      security: [{ session: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '204': { description: 已吊销 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────── 渲染 ─────────────────────────
+  /api/admin/render:
+    get:
+      tags: [render]
+      operationId: getRenderer
+      summary: 当前渲染器版本
+      description: 由其他版本渲染的内容即为过期内容（空正文除外）。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 渲染器信息
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RendererInfo' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [render]
+      operationId: renderPreview
+      summary: 渲染预览
+      description: 渲染正文但不保存。渲染问题（错误与警告）随结果返回，不作为错误响应。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenderInput' }
+      responses:
+        '200':
+          description: 渲染结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RenderPreview' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  # ───────────────────────── 文章 ─────────────────────────
+  /api/admin/posts:
+    get:
+      tags: [posts]
+      operationId: adminListPosts
+      summary: 文章列表（含草稿与定时发布）
+      description: 按 `updated_at` 倒序分页。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: '#/components/schemas/PostState' }
+        - name: q
+          in: query
+          description: 按标题子串筛选
+          schema: { type: string }
+        - name: tag_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - name: slug
+          in: query
+          description: 按 slug 精确匹配
+          schema: { type: string }
+        - $ref: '#/components/parameters/Stale'
+        - $ref: '#/components/parameters/AdminLimit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 文章分页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPostSummaryList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [posts]
+      operationId: createPost
+      summary: 创建文章（草稿）
+      description: '服务端调用渲染服务渲染正文，渲染错误以 `422`（`code: render_error`，带 `line`）返回。'
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PostInput' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPostSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/admin/posts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [posts]
+      operationId: adminGetPost
+      summary: 文章详情（含 Markdown 原文）
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 文章
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPost' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [posts]
+      operationId: updatePost
+      summary: 保存文章内容
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PostInput' }
+      responses:
+        '200':
+          description: 已保存
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPostSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [posts]
+      operationId: deletePost
+      summary: 删除文章
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:publish
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+
+  /api/admin/posts/{id}/publication:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    put:
+      tags: [posts]
+      operationId: publishPost
+      summary: 立即发布或定时发布
+      description: |
+        请求体可为空。`published_at` 省略或为 `null` 时沿用首次发布时间，从未发布过则取当前时间；
+        晚于当前时间即为定时发布。正文为空时返回 `422`。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:publish
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishInput' }
+      responses:
+        '200':
+          description: 已发布
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPostSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [posts]
+      operationId: unpublishPost
+      summary: 撤回发布
+      description: 状态恢复为 `draft`，保留 `published_at`。已是草稿时不修改。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:publish
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      responses:
+        '200':
+          description: 已撤回
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPostSummary' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+
+  # ───────────────────────── 页面 ─────────────────────────
+  /api/admin/pages:
+    get:
+      tags: [pages]
+      operationId: adminListPages
+      summary: 页面列表（含草稿）
+      description: 按 `updated_at` 倒序，不分页。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      parameters:
+        - name: slug
+          in: query
+          description: 按 slug 精确匹配
+          schema: { type: string }
+        - $ref: '#/components/parameters/Stale'
+      responses:
+        '200':
+          description: 页面列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPageSummaryList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [pages]
+      operationId: createPage
+      summary: 创建页面（草稿）
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PageInput' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPageSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/admin/pages/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [pages]
+      operationId: adminGetPage
+      summary: 页面详情（含 Markdown 原文）
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 页面
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPage' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [pages]
+      operationId: updatePage
+      summary: 保存页面内容
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PageInput' }
+      responses:
+        '200':
+          description: 已保存
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPageSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [pages]
+      operationId: deletePage
+      summary: 删除页面
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:publish
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+
+  /api/admin/pages/{id}/publication:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    put:
+      tags: [pages]
+      operationId: publishPage
+      summary: 发布页面
+      description: 请求体须为空或 `{}`（页面没有定时发布）。正文为空时返回 `422`；已发布时不修改、版本号不变。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:publish
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '200':
+          description: 已发布
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPageSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+    delete:
+      tags: [pages]
+      operationId: unpublishPage
+      summary: 撤回发布
+      description: 状态恢复为 `draft`；已是草稿时不修改。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:publish
+      parameters:
+        - $ref: '#/components/parameters/IfMatchRequired'
+      responses:
+        '200':
+          description: 已撤回
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPageSummary' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+
+  # ───────────────────────── 标签 ─────────────────────────
+  /api/admin/tags:
+    get:
+      tags: [taxonomy]
+      operationId: adminListTags
+      summary: 标签列表
+      description: 全部标签，不分页。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 标签列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminTagList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [taxonomy]
+      operationId: createTag
+      summary: 创建标签
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagInput' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminTag' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/admin/tags/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    patch:
+      tags: [taxonomy]
+      operationId: updateTag
+      summary: 修改标签
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TagPatch' }
+      responses:
+        '200':
+          description: 已修改
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminTag' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [taxonomy]
+      operationId: deleteTag
+      summary: 删除标签
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+
+  # ───────────────────────── 专栏 ─────────────────────────
+  /api/admin/series:
+    get:
+      tags: [taxonomy]
+      operationId: adminListSeries
+      summary: 专栏列表
+      description: 全部专栏，不分页。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 专栏列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSeriesList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [taxonomy]
+      operationId: createSeries
+      summary: 创建专栏
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeriesInput' }
+      responses:
+        '201':
+          description: 已创建
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSeries' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/admin/series/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [taxonomy]
+      operationId: adminGetSeries
+      summary: 专栏详情（含全部成员文章）
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 专栏
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSeriesDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [taxonomy]
+      operationId: updateSeries
+      summary: 修改专栏
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeriesPatch' }
+      responses:
+        '200':
+          description: 已修改
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSeries' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [taxonomy]
+      operationId: deleteSeries
+      summary: 删除专栏
+      description: 成员文章自动移出专栏。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+
+  /api/admin/series/{id}/posts:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    put:
+      tags: [taxonomy]
+      operationId: reorderSeries
+      summary: 调整专栏文章顺序
+      description: '`post_ids` 必须恰好是专栏当前成员的一个排列，否则返回 `422`（`code: mismatch`）。'
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SeriesOrder' }
+      responses:
+        '200':
+          description: 调整后的专栏详情
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSeriesDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ───────────────────────── 媒体 ─────────────────────────
+  /api/admin/media:
+    get:
+      tags: [media]
+      operationId: adminListMedia
+      summary: 图片列表或按哈希批量查询
+      description: 传入 `sha256` 时按哈希批量查询并忽略分页参数（`next_cursor` 恒为 `null`）；否则按上传时间倒序分页。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      parameters:
+        - name: sha256
+          in: query
+          description: 可重复，最多 100 个
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 100
+            items: { $ref: '#/components/schemas/Sha256' }
+        - name: unused
+          in: query
+          description: 为 true 时只返回未被引用的图片
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/AdminLimit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 图片分页
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [media]
+      operationId: uploadMedia
+      summary: 上传图片
+      description: 新文件返回 `201`；内容（sha256）已存在时去重返回 `200` 与已有记录。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: media:write
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/MediaUpload' }
+      responses:
+        '200':
+          description: 已存在的相同图片
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Media' }
+        '201':
+          description: 已上传
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location: { $ref: '#/components/headers/Location' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Media' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/admin/media/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [media]
+      operationId: adminGetMedia
+      summary: 图片详情（含引用方）
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 图片
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [media]
+      operationId: updateMedia
+      summary: 修改默认替代文本
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: media:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MediaPatch' }
+      responses:
+        '200':
+          description: 已修改
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Media' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [media]
+      operationId: deleteMedia
+      summary: 删除图片
+      description: 仍被文章正文、文章封面或页面正文引用时返回 `409`，并附带 `referenced_by`。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: media:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      responses:
+        '204': { description: 已删除 }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/MediaInUse' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+
+  # ───────────────────────── 站点设置 ─────────────────────────
+  /api/admin/settings:
+    get:
+      tags: [settings]
+      operationId: adminGetSettings
+      summary: 站点设置详情
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: content:read
+      responses:
+        '200':
+          description: 站点设置
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSettings' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [settings]
+      operationId: updateSettings
+      summary: 修改站点设置
+      description: 只覆盖请求中出现的字段，与现有配置合并后整体校验；请求体为 `{}` 时不递增版本。
+      security: [{ session: [] }, { bearer: [] }]
+      x-scope: settings:write
+      parameters:
+        - $ref: '#/components/parameters/IfMatchOptional'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettingsInput' }
+      responses:
+        '200':
+          description: 已修改
+          headers: { ETag: { $ref: '#/components/headers/ETag' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminSettings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ───────────────────────── 内容分发 ─────────────────────────
+  /feed.xml:
+    get:
+      tags: [distribution]
+      operationId: getAtomFeed
+      summary: Atom 1.0 全文订阅源
+      description: '支持 `If-None-Match` / `If-Modified-Since`；站点 `noindex` 时附加 `X-Robots-Tag: noindex`。'
+      responses:
+        '200':
+          description: Atom 订阅源
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Last-Modified: { $ref: '#/components/headers/LastModified' }
+          content:
+            application/atom+xml:
+              schema: { type: string }
+        '304': { $ref: '#/components/responses/NotModified' }
+
+  /rss.xml:
+    get:
+      tags: [distribution]
+      operationId: getRssFeed
+      summary: RSS 2.0 全文订阅源
+      responses:
+        '200':
+          description: RSS 订阅源
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Last-Modified: { $ref: '#/components/headers/LastModified' }
+          content:
+            application/rss+xml:
+              schema: { type: string }
+        '304': { $ref: '#/components/responses/NotModified' }
+
+  /sitemap.xml:
+    get:
+      tags: [distribution]
+      operationId: getSitemap
+      summary: Sitemap
+      description: 站点 `noindex` 时返回 `404`。
+      responses:
+        '200':
+          description: Sitemap
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Last-Modified: { $ref: '#/components/headers/LastModified' }
+          content:
+            application/xml:
+              schema: { type: string }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /robots.txt:
+    get:
+      tags: [distribution]
+      operationId: getRobots
+      summary: 抓取规则
+      responses:
+        '200':
+          description: robots.txt
+          headers:
+            Last-Modified: { $ref: '#/components/headers/LastModified' }
+          content:
+            text/plain:
+              schema: { type: string }
+        '304': { $ref: '#/components/responses/NotModified' }
+
+  /media/{sha256}:
+    get:
+      tags: [media]
+      operationId: getImage
+      summary: 图片默认规格
+      description: 不超过 1600 宽的最大档位；URL 由内容哈希决定，可永久缓存。
+      parameters:
+        - $ref: '#/components/parameters/Sha256Path'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageFile'
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /media/{sha256}/{file}:
+    get:
+      tags: [media]
+      operationId: getImageVariant
+      summary: 图片指定规格
+      parameters:
+        - $ref: '#/components/parameters/Sha256Path'
+        - name: file
+          in: path
+          required: true
+          description: '`{width}.{format}`，如 `960.webp`；宽度不得有前导零'
+          schema: { type: string, pattern: '^[1-9][0-9]*\.[a-z0-9]+$' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageFile'
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /healthz:
+    get:
+      tags: [distribution]
+      operationId: healthCheck
+      summary: 服务健康状态
+      description: 只检查数据库连接，不依赖渲染服务。
+      responses:
+        '200':
+          description: 正常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: 数据库不可用
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: __Host-session
+      description: 浏览器会话，由登录接口下发；拥有全部 scope，非安全方法须通过跨站请求校验。
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: blog_pat_<base64url>
+      description: 'API 令牌（`Authorization: Bearer blog_pat_…`），只能执行其 scope 允许的操作，不能访问账户、会话与令牌管理。'
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+    SlugPath:
+      name: slug
+      in: path
+      required: true
+      schema: { type: string }
+    Sha256Path:
+      name: sha256
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Sha256' }
+    Cursor:
+      name: cursor
+      in: query
+      description: 上一页返回的 `next_cursor`，首页不传
+      schema: { type: string }
+    PublicLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    AdminLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Stale:
+      name: stale
+      in: query
+      description: 为 true 时只返回由非当前渲染器版本渲染的内容（空正文不算过期）；需要访问渲染服务
+      schema: { type: boolean }
+    IfMatchRequired:
+      name: If-Match
+      in: header
+      required: true
+      description: 资源当前的 `ETag`（如 `"v7"`）；缺失返回 `428`，不匹配返回 `412`
+      schema: { type: string }
+    IfMatchOptional:
+      name: If-Match
+      in: header
+      description: 携带时校验版本，不匹配返回 `412`
+      schema: { type: string }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: 命中弱 `ETag` 时返回 `304`
+      schema: { type: string }
+
+  headers:
+    ETag:
+      description: 资源版本，形如 `"v7"`；写操作以 `If-Match` 携带
+      schema: { type: string }
+    WeakETag:
+      description: 按响应内容生成的弱 ETag
+      schema: { type: string }
+    Location:
+      description: 新资源地址
+      schema: { type: string }
+    LastModified:
+      schema: { type: string }
+    RetryAfter:
+      description: 建议重试等待秒数
+      schema: { type: integer }
+
+  responses:
+    NotModified:
+      description: 未修改
+    MovedPermanently:
+      description: 命中历史 slug，`Location` 指向当前地址
+      headers:
+        Location: { $ref: '#/components/headers/Location' }
+    ImageFile:
+      description: '图片内容（`Cache-Control: public, max-age=31536000, immutable`）'
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+      content:
+        image/webp:
+          schema: { type: string, format: binary }
+        image/jpeg:
+          schema: { type: string, format: binary }
+        image/png:
+          schema: { type: string, format: binary }
+    BadRequest:
+      description: '`malformed-request`：JSON 语法错误、未知字段、查询参数或游标无法解析'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthenticated:
+      description: '`unauthenticated`：未登录、会话过期、令牌无效或登录凭据错误'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: '`forbidden`：跨站请求校验失败、令牌缺少 scope，或令牌访问仅限会话的接口'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: '`not-found`：资源不存在，或公开接口访问未发布内容'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: '`conflict`：slug 或名称重复等'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    MediaInUse:
+      description: '`conflict`：图片仍被引用'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/MediaInUseProblem' }
+    PreconditionFailed:
+      description: '`precondition-failed`：`If-Match` 版本不匹配'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/PreconditionFailedProblem' }
+    PayloadTooLarge:
+      description: '`payload-too-large`：请求体超出上限'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedMediaType:
+      description: '`unsupported-media-type`：`Content-Type` 或图片格式不受支持'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ValidationError:
+      description: '`validation-error`：字段校验失败或业务规则不满足；正文渲染错误为 `code: render_error` 并带 `line`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PreconditionRequired:
+      description: '`precondition-required`：缺少 `If-Match`'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: '`rate-limited`：请求过于频繁'
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ServiceUnavailable:
+      description: '`service-unavailable`：渲染服务暂不可用'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    # ── 基础类型 ──
+    Timestamp:
+      type: string
+      format: date-time
+      description: RFC 3339，UTC，微秒精度
+    Slug:
+      type: string
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+    Sha256:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+    Scope:
+      type: string
+      enum: [content:read, content:write, content:publish, media:write, settings:write]
+    PostState:
+      type: string
+      enum: [draft, scheduled, published]
+    PageState:
+      type: string
+      enum: [draft, published]
+
+    # ── 错误 ──
+    FieldError:
+      type: object
+      required: [code, detail]
+      properties:
+        pointer:
+          type: string
+          description: 请求体中的 JSON Pointer，如 `#/slug`
+        parameter:
+          type: string
+          description: 出错的查询参数名
+        code:
+          type: string
+          description: 机器可读错误码，如 `required`、`invalid_format`、`duplicate`、`not_found`、`render_error`
+        detail:
+          type: string
+        line:
+          type: integer
+          description: '正文渲染错误所在的 Markdown 行号（`code: render_error`）'
+    Problem:
+      type: object
+      required: [type, title, status, instance, request_id]
+      properties:
+        type:
+          type: string
+          description: '`{site}/problems/{kind}`'
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        request_id: { type: string }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/FieldError' }
+    PreconditionFailedProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [current_etag, updated_at]
+          properties:
+            current_etag: { type: string }
+            updated_at: { $ref: '#/components/schemas/Timestamp' }
+    MediaInUseProblem:
+      allOf:
+        - $ref: '#/components/schemas/Problem'
+        - type: object
+          required: [referenced_by]
+          properties:
+            referenced_by:
+              type: array
+              items: { $ref: '#/components/schemas/MediaReference' }
+
+    # ── 公共结构 ──
+    TocItem:
+      type: object
+      required: [depth, id, text]
+      properties:
+        depth: { type: integer, minimum: 2, maximum: 6 }
+        id: { type: string }
+        text: { type: string }
+    Variant:
+      type: object
+      required: [width, height, format, url]
+      properties:
+        width: { type: integer }
+        height: { type: integer }
+        format: { type: string, examples: [webp] }
+        url: { type: string }
+    Image:
+      type: object
+      required: [sha256, width, height, alt, src, variants]
+      properties:
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        width: { type: integer }
+        height: { type: integer }
+        alt: { type: string }
+        src: { type: string }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/Variant' }
+    TagRef:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+    PostRef:
+      type: object
+      required: [slug, title]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+    SeriesRef:
+      type: object
+      required: [slug, title]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+
+    # ── 公开内容 ──
+    PostSummary:
+      type: object
+      required: [id, slug, title, summary, word_count, published_at, updated_at, tags, series, cover]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        word_count: { type: integer }
+        published_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        tags:
+          type: array
+          items: { $ref: '#/components/schemas/TagRef' }
+        series:
+          oneOf:
+            - $ref: '#/components/schemas/SeriesRef'
+            - type: 'null'
+        cover:
+          oneOf:
+            - $ref: '#/components/schemas/Image'
+            - type: 'null'
+    PostSummaryList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PostSummary' }
+        next_cursor: { type: [string, 'null'] }
+    SeriesNav:
+      type: object
+      required: [slug, title, index, total, prev, next]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        index: { type: integer, description: 本文在专栏中的序号，从 1 开始 }
+        total: { type: integer }
+        prev:
+          oneOf:
+            - $ref: '#/components/schemas/PostRef'
+            - type: 'null'
+        next:
+          oneOf:
+            - $ref: '#/components/schemas/PostRef'
+            - type: 'null'
+    Adjacent:
+      type: object
+      required: [newer, older]
+      properties:
+        newer:
+          oneOf:
+            - $ref: '#/components/schemas/PostRef'
+            - type: 'null'
+        older:
+          oneOf:
+            - $ref: '#/components/schemas/PostRef'
+            - type: 'null'
+    Post:
+      type: object
+      required: [id, slug, title, summary, html, toc, has_math, word_count, published_at, updated_at, tags, cover, series, adjacent]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        html: { type: string }
+        toc:
+          type: array
+          items: { $ref: '#/components/schemas/TocItem' }
+        has_math: { type: boolean }
+        word_count: { type: integer }
+        published_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+        tags:
+          type: array
+          items: { $ref: '#/components/schemas/TagRef' }
+        cover:
+          oneOf:
+            - $ref: '#/components/schemas/Image'
+            - type: 'null'
+        series:
+          oneOf:
+            - $ref: '#/components/schemas/SeriesNav'
+            - type: 'null'
+        adjacent: { $ref: '#/components/schemas/Adjacent' }
+    Page:
+      type: object
+      required: [slug, title, description, html, toc, has_math, updated_at]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        html: { type: string }
+        toc:
+          type: array
+          items: { $ref: '#/components/schemas/TocItem' }
+        has_math: { type: boolean }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    Tag:
+      type: object
+      required: [slug, name, post_count]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        post_count: { type: integer, description: 已发布文章数 }
+    TagList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Tag' }
+    Series:
+      type: object
+      required: [slug, title, description, post_count, last_published_at]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        post_count: { type: integer, description: 已发布文章数 }
+        last_published_at: { $ref: '#/components/schemas/Timestamp' }
+    SeriesList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Series' }
+    SeriesPost:
+      type: object
+      required: [index, slug, title, published_at]
+      properties:
+        index: { type: integer }
+        slug: { type: string }
+        title: { type: string }
+        published_at: { $ref: '#/components/schemas/Timestamp' }
+    SeriesDetail:
+      type: object
+      required: [slug, title, description, posts]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        posts:
+          type: array
+          items: { $ref: '#/components/schemas/SeriesPost' }
+    SearchResult:
+      type: object
+      required: [slug, title, summary, snippet, published_at]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        snippet: { type: string, description: 命中片段，未到达正文首尾时补省略号 }
+        published_at: { $ref: '#/components/schemas/Timestamp' }
+    SearchResults:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SearchResult' }
+    NavItem:
+      type: object
+      additionalProperties: false
+      required: [label, url]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 50 }
+        url:
+          type: string
+          maxLength: 500
+          description: 以 `/` 开头的站内路径（不含 `//`）或 http(s) 绝对地址
+    SocialLink:
+      type: object
+      additionalProperties: false
+      required: [platform, url]
+      properties:
+        platform:
+          type: string
+          maxLength: 30
+          pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+          description: 如 github、x、email，前端据此选择图标
+        url:
+          type: string
+          maxLength: 500
+          description: http(s) 绝对地址或 `mailto:` 邮箱地址
+    SiteSettings:
+      type: object
+      required: [title, subtitle, description, author, language, timezone, footer_text, navigation, social_links, noindex, posts_per_page]
+      properties:
+        title: { type: string }
+        subtitle: { type: string }
+        description: { type: string }
+        author: { type: string }
+        language: { type: string, description: BCP 47 语言标签 }
+        timezone: { type: string, description: IANA 时区名称 }
+        footer_text: { type: string }
+        navigation:
+          type: array
+          items: { $ref: '#/components/schemas/NavItem' }
+        social_links:
+          type: array
+          items: { $ref: '#/components/schemas/SocialLink' }
+        noindex: { type: boolean }
+        posts_per_page: { type: integer }
+
+    # ── 认证 ──
+    LoginInput:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+    User:
+      type: object
+      required: [id, username, display_name]
+      properties:
+        id: { type: integer, format: int64 }
+        username: { type: string }
+        display_name: { type: string }
+    LoginResult:
+      type: object
+      required: [user, session]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        session:
+          type: object
+          required: [id, expires_at]
+          properties:
+            id: { type: integer, format: int64 }
+            expires_at: { $ref: '#/components/schemas/Timestamp' }
+    Me:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [via, scopes]
+          properties:
+            via:
+              type: string
+              enum: [session, token]
+              description: 本次请求所用凭据
+            scopes:
+              type: array
+              description: 凭据拥有的权限；会话为全部 scope
+              items: { $ref: '#/components/schemas/Scope' }
+    Session:
+      type: object
+      required: [id, current, user_agent, ip, created_at, last_seen_at, expires_at]
+      properties:
+        id: { type: integer, format: int64 }
+        current: { type: boolean }
+        user_agent: { type: string }
+        ip: { type: [string, 'null'] }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        last_seen_at: { $ref: '#/components/schemas/Timestamp' }
+        expires_at: { $ref: '#/components/schemas/Timestamp' }
+    SessionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Session' }
+    PasswordChange:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string, minLength: 12, maxLength: 1024 }
+    Token:
+      type: object
+      required: [id, name, scopes, created_at, last_used_at, expires_at]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { $ref: '#/components/schemas/Scope' }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        last_used_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        expires_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+    TokenList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Token' }
+    TokenInput:
+      type: object
+      additionalProperties: false
+      required: [name, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 同一用户内唯一，去除首尾空白后保存
+        scopes:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Scope' }
+        expires_at:
+          description: 过期时间，须晚于当前时间；省略或为 null 表示不过期
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+    TokenCreated:
+      type: object
+      required: [token, secret]
+      properties:
+        token: { $ref: '#/components/schemas/Token' }
+        secret:
+          type: string
+          description: 令牌明文（`blog_pat_…`），只返回这一次
+
+    # ── 渲染 ──
+    RenderInput:
+      type: object
+      additionalProperties: false
+      required: [body_md]
+      properties:
+        body_md: { type: string, description: 不超过 1 MB }
+    RenderIssue:
+      type: object
+      required: [line, message, severity]
+      properties:
+        line: { type: integer }
+        message: { type: string }
+        severity:
+          type: string
+          enum: [error, warning]
+          description: error 阻止保存，warning 仅作提示
+    RenderPreview:
+      type: object
+      required: [html, toc, has_math, word_count, renderer_version, issues]
+      properties:
+        html: { type: string }
+        toc:
+          type: array
+          items: { $ref: '#/components/schemas/TocItem' }
+        has_math: { type: boolean }
+        word_count: { type: integer }
+        renderer_version: { type: string }
+        issues:
+          type: array
+          items: { $ref: '#/components/schemas/RenderIssue' }
+    RendererInfo:
+      type: object
+      required: [renderer_version]
+      properties:
+        renderer_version: { type: string }
+
+    # ── 文章管理 ──
+    AdminTagRef:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        name: { type: string }
+    AdminSeriesRef:
+      type: object
+      required: [id, title, position]
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        position: { type: integer }
+    AdminPostSummary:
+      type: object
+      required: [id, slug, title, state, published_at, renderer_version, tags, series, version, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        title: { type: string }
+        state: { $ref: '#/components/schemas/PostState' }
+        published_at:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        renderer_version:
+          type: string
+          description: 生成渲染结果的渲染器版本；空正文为空字符串
+        tags:
+          type: array
+          items: { $ref: '#/components/schemas/AdminTagRef' }
+        series:
+          oneOf:
+            - $ref: '#/components/schemas/AdminSeriesRef'
+            - type: 'null'
+        version: { type: integer }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminPostSummaryList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AdminPostSummary' }
+        next_cursor: { type: [string, 'null'] }
+    AdminPost:
+      allOf:
+        - $ref: '#/components/schemas/AdminPostSummary'
+        - type: object
+          required: [summary, body_md, cover]
+          properties:
+            summary: { type: string }
+            body_md: { type: string }
+            cover:
+              oneOf:
+                - $ref: '#/components/schemas/Image'
+                - type: 'null'
+    PostInput:
+      type: object
+      additionalProperties: false
+      required: [title, slug, summary, body_md, tag_ids, series_id, cover_media_id]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        slug:
+          allOf:
+            - $ref: '#/components/schemas/Slug'
+          maxLength: 100
+        summary: { type: string, maxLength: 500 }
+        body_md:
+          type: string
+          description: Markdown 原文，不超过 1 MB；引用的 `/media/{sha256}` 图片必须存在
+        tag_ids:
+          type: array
+          maxItems: 10
+          items: { type: integer, format: int64 }
+        series_id: { type: [integer, 'null'], format: int64 }
+        cover_media_id: { type: [integer, 'null'], format: int64 }
+    PublishInput:
+      type: object
+      additionalProperties: false
+      properties:
+        published_at:
+          description: 省略或为 null 时沿用首次发布时间或取当前时间；晚于当前时间即为定时发布
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+
+    # ── 页面管理 ──
+    AdminPageSummary:
+      type: object
+      required: [id, slug, title, state, renderer_version, version, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        title: { type: string }
+        state: { $ref: '#/components/schemas/PageState' }
+        renderer_version: { type: string }
+        version: { type: integer }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminPageSummaryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AdminPageSummary' }
+    AdminPage:
+      allOf:
+        - $ref: '#/components/schemas/AdminPageSummary'
+        - type: object
+          required: [description, body_md]
+          properties:
+            description: { type: string }
+            body_md: { type: string }
+    PageInput:
+      type: object
+      additionalProperties: false
+      required: [title, slug, description, body_md]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        slug:
+          allOf:
+            - $ref: '#/components/schemas/Slug'
+          maxLength: 100
+          description: 不能为站点保留路径（admin、api、feed、media、posts、tags 等），否则返回 422 `reserved`
+        description: { type: string, maxLength: 500 }
+        body_md: { type: string, description: Markdown 原文，不超过 1 MB }
+
+    # ── 标签与专栏管理 ──
+    AdminTag:
+      type: object
+      required: [id, slug, name, post_count, published_post_count, version, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        name: { type: string }
+        post_count: { type: integer }
+        published_post_count: { type: integer }
+        version: { type: integer }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminTagList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AdminTag' }
+    TagInput:
+      type: object
+      additionalProperties: false
+      required: [name, slug]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 50, description: 不区分大小写唯一 }
+        slug:
+          allOf:
+            - $ref: '#/components/schemas/Slug'
+          maxLength: 50
+    TagPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 50 }
+        slug:
+          allOf:
+            - $ref: '#/components/schemas/Slug'
+          maxLength: 50
+    AdminSeries:
+      type: object
+      required: [id, slug, title, description, post_count, published_post_count, version, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        post_count: { type: integer }
+        published_post_count: { type: integer }
+        version: { type: integer }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    AdminSeriesList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AdminSeries' }
+    AdminSeriesPost:
+      type: object
+      required: [id, slug, title, state, position]
+      properties:
+        id: { type: integer, format: int64 }
+        slug: { type: string }
+        title: { type: string }
+        state: { $ref: '#/components/schemas/PostState' }
+        position: { type: integer }
+    AdminSeriesDetail:
+      allOf:
+        - $ref: '#/components/schemas/AdminSeries'
+        - type: object
+          required: [posts]
+          properties:
+            posts:
+              type: array
+              items: { $ref: '#/components/schemas/AdminSeriesPost' }
+    SeriesInput:
+      type: object
+      additionalProperties: false
+      required: [title, slug]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        slug:
+          allOf:
+            - $ref: '#/components/schemas/Slug'
+          maxLength: 100
+        description: { type: string, maxLength: 2000 }
+    SeriesPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        slug:
+          allOf:
+            - $ref: '#/components/schemas/Slug'
+          maxLength: 100
+        description: { type: string, maxLength: 2000 }
+    SeriesOrder:
+      type: object
+      additionalProperties: false
+      required: [post_ids]
+      properties:
+        post_ids:
+          type: array
+          items: { type: integer, format: int64 }
+
+    # ── 媒体管理 ──
+    Media:
+      type: object
+      required: [id, sha256, width, height, byte_size, original_filename, alt, src, variants, reference_count, version, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        sha256: { $ref: '#/components/schemas/Sha256' }
+        width: { type: integer }
+        height: { type: integer }
+        byte_size: { type: integer, format: int64 }
+        original_filename: { type: string }
+        alt: { type: string }
+        src: { type: string }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/Variant' }
+        reference_count:
+          type: integer
+          description: 引用该图片的文章与页面数（同一文章的正文与封面只计一次）
+        version: { type: integer }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+    MediaList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Media' }
+        next_cursor: { type: [string, 'null'] }
+    MediaReference:
+      type: object
+      required: [type, id, title]
+      properties:
+        type: { type: string, enum: [post, page] }
+        id: { type: integer, format: int64 }
+        title: { type: string }
+    MediaDetail:
+      allOf:
+        - $ref: '#/components/schemas/Media'
+        - type: object
+          properties:
+            referenced_by:
+              type: array
+              description: 引用方；没有引用时省略该字段
+              items: { $ref: '#/components/schemas/MediaReference' }
+    MediaUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: JPEG / PNG / WebP，≤ 20 MB，总像素 ≤ 4000 万
+        alt:
+          type: string
+          maxLength: 500
+    MediaPatch:
+      type: object
+      additionalProperties: false
+      required: [alt]
+      properties:
+        alt: { type: string, maxLength: 500 }
+
+    # ── 站点设置管理 ──
+    AdminSettings:
+      allOf:
+        - $ref: '#/components/schemas/SiteSettings'
+        - type: object
+          required: [feed_item_count, version, updated_at]
+          properties:
+            feed_item_count: { type: integer }
+            version: { type: integer }
+            updated_at: { $ref: '#/components/schemas/Timestamp' }
+    SettingsInput:
+      type: object
+      additionalProperties: false
+      description: 只覆盖出现的字段；字符串去除首尾空白后校验
+      properties:
+        title: { type: string, minLength: 1, maxLength: 100 }
+        subtitle: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 500 }
+        author: { type: string, minLength: 1, maxLength: 100 }
+        language: { type: string, maxLength: 35, pattern: '^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$' }
+        timezone: { type: string, description: IANA 时区名称，不接受 Local }
+        footer_text: { type: string, maxLength: 500 }
+        navigation:
+          type: array
+          maxItems: 10
+          description: 整体替换
+          items: { $ref: '#/components/schemas/NavItem' }
+        social_links:
+          type: array
+          maxItems: 10
+          description: 整体替换
+          items: { $ref: '#/components/schemas/SocialLink' }
+        noindex: { type: boolean }
+        posts_per_page: { type: integer, minimum: 1, maximum: 50 }
+        feed_item_count: { type: integer, minimum: 1, maximum: 100 }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }

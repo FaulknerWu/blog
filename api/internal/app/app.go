@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"blog/api/internal/auth"
@@ -27,6 +28,7 @@ type App struct {
 	auth    *auth.Service
 	content *content.Service
 	handler http.Handler
+	routes  []string // 已注册的路由模式，如 "GET /api/posts"，供契约测试与 openapi.yaml 比对
 }
 
 func New(cfg Config, s *store.Store) (*App, error) {
@@ -37,7 +39,7 @@ func New(cfg Config, s *store.Store) (*App, error) {
 	authSvc := auth.NewService(s)
 	contentSvc := content.NewService(s, render.NewClient(cfg.RenderURL))
 	a := &App{cfg: cfg, store: s, auth: authSvc, content: contentSvc}
-	a.handler = a.routes(
+	a.handler = a.mount(
 		auth.NewHandler(authSvc, cfg.SiteURL),
 		content.NewHandler(contentSvc),
 		post.NewHandler(post.NewService(s, contentSvc), s),
@@ -51,7 +53,10 @@ func New(cfg Config, s *store.Store) (*App, error) {
 
 func (a *App) Handler() http.Handler { return a.handler }
 
-func (a *App) routes(authH *auth.Handler, contentH *content.Handler, postH *post.Handler, pageH *page.Handler, mediaH *media.Handler, feedH *feed.Handler, settingsH *settings.Handler) http.Handler {
+// Routes 返回已注册的全部路由模式（"METHOD /path"）。
+func (a *App) Routes() []string { return slices.Clone(a.routes) }
+
+func (a *App) mount(authH *auth.Handler, contentH *content.Handler, postH *post.Handler, pageH *page.Handler, mediaH *media.Handler, feedH *feed.Handler, settingsH *settings.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	type route struct {
@@ -71,6 +76,7 @@ func (a *App) routes(authH *auth.Handler, contentH *content.Handler, postH *post
 				h = httpx.CacheControl(cache, h)
 			}
 			mux.Handle(rt.pattern, h)
+			a.routes = append(a.routes, rt.pattern)
 		}
 	}
 
