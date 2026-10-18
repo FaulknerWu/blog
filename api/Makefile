@@ -7,7 +7,7 @@ generate:
 	docker run --rm -u $$(id -u):$$(id -g) -v "$$PWD":/src -w /src $(SQLC_IMAGE) generate
 
 build:
-	CGO_ENABLED=0 go build -trimpath -tags nodynamic -o bin/blog-api ./cmd/blog-api
+	CGO_ENABLED=0 go build -trimpath -tags nodynamic -o bin/blogd ./cmd/blogd
 
 test:
 	BLOG_TEST_DATABASE_URL='$(TEST_DB)' go test ./...
