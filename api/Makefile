@@ -8,6 +8,7 @@ generate:
 
 build:
 	CGO_ENABLED=0 go build -trimpath -tags nodynamic -o bin/blogd ./cmd/blogd
+	CGO_ENABLED=0 go build -trimpath -o bin/blog ./cmd/blog
 
 test:
 	BLOG_TEST_DATABASE_URL='$(TEST_DB)' go test ./...
