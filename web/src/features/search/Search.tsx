@@ -1,5 +1,5 @@
 import { Form, Link } from "react-router";
-import type { SearchHit } from "~/shared/api/types";
+import type { SearchResult } from "~/shared/api/types";
 import { formatDate, type Locale } from "~/shared/lib/format";
 import { highlight } from "./highlight";
 
@@ -29,7 +29,7 @@ export function SearchForm({ query }: { query: string }) {
   );
 }
 
-export function SearchResults({ query, hits, locale }: { query: string; hits: SearchHit[]; locale: Locale }) {
+export function SearchResults({ query, hits, locale }: { query: string; hits: SearchResult[]; locale: Locale }) {
   return (
     <>
       <p className="mt-8 text-md leading-loose text-muted" role="status">

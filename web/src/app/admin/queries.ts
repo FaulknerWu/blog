@@ -23,6 +23,8 @@ export const queryClient = new QueryClient({
 
 export const q = {
   me: queryOptions({ queryKey: ["me"], queryFn: adminApi.me, staleTime: Infinity }),
+  // 当前渲染器版本，用来标出由旧版渲染器生成的内容；一次会话内视为不变。
+  renderer: queryOptions({ queryKey: ["renderer"], queryFn: adminApi.renderer, staleTime: Infinity }),
   sessions: queryOptions({ queryKey: ["sessions"], queryFn: async () => (await adminApi.sessions()).items }),
 
   // 全部文章摘要，用于统计数量与概览页；单人博客的文章量很小，按 100 条一页取完。

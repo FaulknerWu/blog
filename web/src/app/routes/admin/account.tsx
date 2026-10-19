@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { adminApi, ApiError } from "~/shared/api/admin";
-import type { Session } from "~/shared/api/admin-types";
+import type { Session } from "~/shared/api/types";
 import { formatWhen } from "~/shared/lib/datetime";
 import { formatMonthDay } from "~/shared/lib/format";
 import { describeUserAgent } from "~/shared/lib/useragent";

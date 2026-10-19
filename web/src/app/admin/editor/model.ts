@@ -1,8 +1,6 @@
 import { adminApi } from "~/shared/api/admin";
-import type { AdminPageSummary, AdminPostSummary, PageInput, PostInput } from "~/shared/api/admin-types";
-import type { Image } from "~/shared/api/types";
+import type { AdminPageSummary, AdminPostSummary, Image, PageInput, PostInput } from "~/shared/api/types";
 import { slugify } from "~/shared/lib/slug";
-import type { Rendered } from "~/features/editor/render/renderer";
 
 export type Kind = "post" | "page";
 
@@ -89,21 +87,21 @@ export function withDefaults(kind: Kind, form: EditorForm, now = new Date()): Ed
   return { ...form, title, slug };
 }
 
-export function postInput(form: EditorForm, rendered: Rendered | null): PostInput {
+// 只提交 Markdown 原文与元数据，渲染由服务端完成。
+export function postInput(form: EditorForm): PostInput {
   return {
     title: form.title,
     slug: form.slug,
     summary: form.summary.trim(),
     body_md: form.body,
-    rendered,
     tag_ids: form.tagIds,
     series_id: form.seriesId,
     cover_media_id: form.cover?.id ?? null,
   };
 }
 
-export function pageInput(form: EditorForm, rendered: Rendered | null): PageInput {
-  return { title: form.title, slug: form.slug, description: form.summary.trim(), body_md: form.body, rendered };
+export function pageInput(form: EditorForm): PageInput {
+  return { title: form.title, slug: form.slug, description: form.summary.trim(), body_md: form.body };
 }
 
 export const sameForm = (a: EditorForm, b: EditorForm) => JSON.stringify(a) === JSON.stringify(b);
@@ -119,7 +117,6 @@ export function fieldOf(pointer: string | undefined): keyof EditorForm | "other"
     case "description":
       return "summary";
     case "body_md":
-    case "rendered":
       return "body";
     case "tag_ids":
       return "tagIds";

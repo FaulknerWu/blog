@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { Media } from "~/shared/api/admin-types";
+import type { Media } from "~/shared/api/types";
 import { cn } from "~/shared/lib/cn";
 import { button, Dialog, ui } from "~/shared/ui/admin/ui";
 import { MediaGrid, UploadList } from "./MediaGrid";

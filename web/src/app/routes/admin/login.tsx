@@ -41,8 +41,9 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      const { user } = await adminApi.login(username.trim(), password);
-      queryClient.setQueryData(q.me.queryKey, user);
+      await adminApi.login(username.trim(), password);
+      // 登录结果只有用户信息，/api/auth/me 还包含凭据类型与权限，进入后台时重新获取。
+      queryClient.removeQueries({ queryKey: q.me.queryKey });
       navigate(safeNext(params.get("next")), { replace: true });
     } catch (err) {
       setPassword("");

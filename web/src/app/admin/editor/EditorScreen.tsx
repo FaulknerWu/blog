@@ -2,22 +2,20 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { adminApi, ApiError, upload } from "~/shared/api/admin";
-import type { AdminPageSummary, AdminPostSummary, Media } from "~/shared/api/admin-types";
+import type { AdminPageSummary, AdminPostSummary, Media, RenderIssue } from "~/shared/api/types";
 import { formatShort, formatWhen } from "~/shared/lib/datetime";
 import { formatDate, formatNumber, readingMinutes } from "~/shared/lib/format";
 import { cn } from "~/shared/lib/cn";
 import { button, ConfirmDialog, Dialog, Status, ui } from "~/shared/ui/admin/ui";
 import { clearDraft, loadDraft, saveDraft, type LocalDraft } from "~/features/editor/drafts";
 import { MarkdownEditor, type EditorHandle } from "~/features/editor/MarkdownEditor";
-import { lookupMedia, rememberMedia } from "~/features/editor/mediaLookup";
 import { Preview } from "~/features/editor/Preview";
-import { renderMarkdown } from "~/features/editor/render/renderer";
-import { isStale, RENDERER_VERSION } from "~/features/editor/render/version";
 import { Toolbar } from "~/features/editor/Toolbar";
 import { useRendered } from "~/features/editor/useRendered";
 import { MediaPicker } from "~/features/media/MediaPicker";
 import { checkFile, markdownRef } from "~/features/media/uploads";
 import { q, queryClient } from "~/app/admin/queries";
+import { useRenderer } from "~/app/admin/status";
 import { useLocale, useSite } from "~/app/site";
 import { CoverField } from "./CoverField";
 import {
@@ -106,16 +104,23 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
   const [picker, setPicker] = useState<"insert" | "cover" | null>(null);
   const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  // 保存时服务端报告的渲染错误，只对提交时的正文有效。
+  const [rejected, setRejected] = useState<{ body: string; issues: RenderIssue[] } | null>(null);
 
   const series = useQuery({ ...q.seriesList, enabled: kind === "post" }).data;
   const media = useQuery({ ...q.allMedia, enabled: picker !== null }).data;
 
   const draftKey = `${kind}:${meta?.id ?? "new"}`;
   const dirty = !sameForm(form, saved);
+  const { isStale } = useRenderer();
   const stale = meta ? isStale(meta.rendererVersion) : false;
-  const { result } = useRendered(form.body, lookupMedia);
+  const { result } = useRendered(form.body);
   const issues = result?.issues;
-  const errors = useMemo(() => issues?.filter((i) => i.severity === "error") ?? [], [issues]);
+  const errors = useMemo(() => {
+    const previewErrors = issues?.filter((i) => i.severity === "error") ?? [];
+    if (previewErrors.length || rejected?.body !== form.body) return previewErrors;
+    return rejected.issues;
+  }, [issues, rejected, form.body]);
   const errorLines = useMemo(() => errors.map((e) => e.line), [errors]);
 
   // 首次进入：读取视图偏好，并检查本地是否有未保存的内容。
@@ -178,7 +183,7 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
     }
   }
 
-  // save 渲染当前正文并提交；version 用于冲突后强制覆盖。成功时返回最新的服务器状态。
+  // save 提交当前正文，由服务端渲染；version 用于冲突后强制覆盖。成功时返回最新的服务器状态。
   async function save(version = meta?.version): Promise<Meta | null> {
     if (saving) return null;
     setSaving(true);
@@ -186,19 +191,12 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
     setFieldErrors({});
     const submitted = withDefaults(kind, form);
     try {
-      const r = submitted.body ? await renderMarkdown(submitted.body, lookupMedia) : null;
-      const bad = r?.issues.find((i) => i.severity === "error");
-      if (bad) {
-        setSaveError(`第 ${bad.line} 行：${bad.message}，修复前无法保存。`);
-        return null;
-      }
-      const rendered = r?.rendered ?? null;
       let summary: AdminPostSummary | AdminPageSummary;
       if (kind === "post") {
-        const input = postInput(submitted, rendered);
+        const input = postInput(submitted);
         summary = meta ? await adminApi.updatePost(meta.id, version!, input) : await adminApi.createPost(input);
       } else {
-        const input = pageInput(submitted, rendered);
+        const input = pageInput(submitted);
         summary = meta ? await adminApi.updatePage(meta.id, version!, input) : await adminApi.createPage(input);
       }
       const created = !meta;
@@ -216,14 +214,14 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
       if (created) onCreated(summary.id);
       return metaFrom(summary);
     } catch (err) {
-      handleWriteError(err);
+      handleWriteError(err, submitted.body);
       return null;
     } finally {
       setSaving(false);
     }
   }
 
-  function handleWriteError(err: unknown) {
+  function handleWriteError(err: unknown, body = form.body) {
     if (err instanceof ApiError && err.status === 412) {
       const version = Number(/\d+/.exec(err.problem?.current_etag ?? "")?.[0]);
       setConflict({ version: Number.isFinite(version) ? version : (meta?.version ?? 0) + 1, updatedAt: err.problem?.updated_at ?? null });
@@ -232,6 +230,12 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
     if (err instanceof ApiError && err.status === 409) {
       setFieldErrors({ slug: "链接已被占用" });
       setSaveError("链接已被占用，换一个再保存。");
+      return;
+    }
+    // 正文渲染错误与预览中的错误一样标在对应行上，由错误栏提示。
+    const renderErrors = err instanceof ApiError ? (err.problem?.errors?.filter((e) => e.code === "render_error") ?? []) : [];
+    if (renderErrors.length) {
+      setRejected({ body, issues: renderErrors.map((e) => ({ line: e.line ?? 1, message: e.detail, severity: "error" })) });
       return;
     }
     if (err instanceof ApiError && err.problem?.errors?.length) {
@@ -359,7 +363,6 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
   }
 
   function onUploaded(m: Media) {
-    rememberMedia(m);
     queryClient.setQueryData(q.allMedia.queryKey, (old) => (old?.some((x) => x.id === m.id) ? old : [m, ...(old ?? [])]));
   }
 
@@ -545,15 +548,15 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
                 第 {cursor.line} 行，第 {cursor.column} 列
               </span>
               <span>
-                {formatNumber(result?.wordCount ?? 0, locale)} 字 · 约 {readingMinutes(result?.wordCount ?? 0)} 分钟 · 渲染器{" "}
-                {RENDERER_VERSION}
+                {formatNumber(result?.word_count ?? 0, locale)} 字 · 约 {readingMinutes(result?.word_count ?? 0)} 分钟 · 渲染器{" "}
+                {result?.renderer_version ?? "…"}
               </span>
             </div>
           </section>
         )}
         {showPreview && (
           <section aria-label="预览" className={cn(pane, split ? "basis-105" : "basis-160", "xl:overflow-auto")}>
-            <Preview html={result?.rendered.html} />
+            <Preview html={result?.html} />
           </section>
         )}
         <aside aria-label={`${L.noun}属性`} className="min-w-65 shrink grow-0 basis-full border-t border-line px-6 pt-1 pb-6 xl:h-full xl:basis-75 xl:overflow-auto xl:border-t-0">
@@ -650,10 +653,10 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
             <span className="-mt-1 line-clamp-3 text-sm text-ink-soft">{form.summary || site.settings.description}</span>
           </div>
 
-          {(result?.rendered.toc.length ?? 0) > 0 && (
+          {(result?.toc.length ?? 0) > 0 && (
             <div className={group}>
               <span className={ui.label}>目录</span>
-              <TocOutline items={result!.rendered.toc} />
+              <TocOutline items={result!.toc} />
             </div>
           )}
 
@@ -681,7 +684,7 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
           kind={kind}
           meta={meta}
           form={withDefaults(kind, form)}
-          issues={issues}
+          preview={result}
           seriesTitle={seriesInfo?.title}
           locale={locale}
           busy={saving}
@@ -744,7 +747,6 @@ export function EditorScreen({ kind, initial, onCreated }: Props) {
           onClose={() => setPicker(null)}
           onUploaded={onUploaded}
           onPick={(m) => {
-            rememberMedia(m);
             if (picker === "cover") update("cover", { id: m.id, image: m });
             else editor.current?.insertBlockAt(null, markdownRef(m));
             setPicker(null);

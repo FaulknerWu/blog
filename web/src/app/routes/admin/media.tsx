@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { adminApi } from "~/shared/api/admin";
-import type { Media } from "~/shared/api/admin-types";
+import type { Media } from "~/shared/api/types";
 import { formatDate, formatBytes } from "~/shared/lib/format";
 import { cn } from "~/shared/lib/cn";
 import { button, ConfirmDialog, ui } from "~/shared/ui/admin/ui";

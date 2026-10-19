@@ -1,12 +1,12 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useRevalidator } from "react-router";
 import { adminApi } from "~/shared/api/admin";
-import type { AdminPageSummary, AdminSettings } from "~/shared/api/admin-types";
+import type { AdminPageSummary, AdminSettings } from "~/shared/api/types";
 import { formatWhen } from "~/shared/lib/datetime";
 import { cn } from "~/shared/lib/cn";
 import { button, Status, ui } from "~/shared/ui/admin/ui";
-import { isStale } from "~/features/editor/render/version";
 import { q, queryClient } from "~/app/admin/queries";
+import { useRenderer } from "~/app/admin/status";
 import { useLocale } from "~/app/site";
 
 export function meta() {
@@ -18,6 +18,7 @@ const maxNavigation = 10;
 export default function Pages() {
   const locale = useLocale();
   const pages = useQuery(q.pages);
+  const { isStale } = useRenderer();
   const settings = useQuery(q.settings).data;
   const revalidator = useRevalidator();
 

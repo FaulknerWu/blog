@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useId, useState, type KeyboardEvent } from "react";
 import { adminApi, ApiError } from "~/shared/api/admin";
-import type { AdminTag } from "~/shared/api/admin-types";
+import type { AdminTag } from "~/shared/api/types";
 import { slugError, slugify } from "~/shared/lib/slug";
 import { cn } from "~/shared/lib/cn";
 import { ui } from "~/shared/ui/admin/ui";

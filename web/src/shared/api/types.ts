@@ -1,124 +1,76 @@
-// 公开接口的数据结构，与 docs/api-design.md 第 3 节保持一致。
-// OpenAPI 契约就绪后改为由契约生成，届时删除本文件。
+// 接口数据结构的命名别名，全部来自 api/openapi.yaml 生成的 schema.gen.ts（npm run gen:api）。
+import type { components } from "./schema.gen";
 
-export type Timestamp = string;
+type Schemas = components["schemas"];
 
-export interface TagRef {
-  slug: string;
-  name: string;
-}
+export type Timestamp = Schemas["Timestamp"];
+export type FieldError = Schemas["FieldError"];
+// Problem 合并了各类错误响应的扩展字段：412 的 current_etag/updated_at，删除仍被引用图片时的 referenced_by。
+export type Problem = Schemas["Problem"] &
+  Partial<Omit<Schemas["PreconditionFailedProblem"], keyof Schemas["Problem"]>> &
+  Partial<Omit<Schemas["MediaInUseProblem"], keyof Schemas["Problem"]>>;
 
-export interface PostRef {
-  slug: string;
-  title: string;
-}
+// 公开内容
+export type TagRef = Schemas["TagRef"];
+export type PostRef = Schemas["PostRef"];
+export type SeriesRef = Schemas["SeriesRef"];
+export type Variant = Schemas["Variant"];
+export type Image = Schemas["Image"];
+export type TocItem = Schemas["TocItem"];
+export type PostSummary = Schemas["PostSummary"];
+export type PostSummaryList = Schemas["PostSummaryList"];
+export type SeriesNav = Schemas["SeriesNav"];
+export type Post = Schemas["Post"];
+export type Page = Schemas["Page"];
+export type Tag = Schemas["Tag"];
+export type TagList = Schemas["TagList"];
+export type Series = Schemas["Series"];
+export type SeriesList = Schemas["SeriesList"];
+export type SeriesDetail = Schemas["SeriesDetail"];
+export type SearchResult = Schemas["SearchResult"];
+export type SearchResults = Schemas["SearchResults"];
+export type SiteSettings = Schemas["SiteSettings"];
 
-export interface SeriesRef {
-  slug: string;
-  title: string;
-}
+// 认证与令牌
+export type User = Schemas["User"];
+export type LoginResult = Schemas["LoginResult"];
+export type Me = Schemas["Me"];
+export type Session = Schemas["Session"];
+export type SessionList = Schemas["SessionList"];
+export type Scope = Schemas["Scope"];
+export type Token = Schemas["Token"];
+export type TokenList = Schemas["TokenList"];
+export type TokenInput = Schemas["TokenInput"];
+export type TokenCreated = Schemas["TokenCreated"];
 
-export interface ImageVariant {
-  width: number;
-  height: number;
-  format: string;
-  url: string;
-}
+// 渲染
+export type RenderIssue = Schemas["RenderIssue"];
+export type RenderPreview = Schemas["RenderPreview"];
+export type RendererInfo = Schemas["RendererInfo"];
 
-export interface Image {
-  sha256: string;
-  width: number;
-  height: number;
-  alt: string;
-  src: string;
-  variants: ImageVariant[];
-}
-
-export interface TocItem {
-  depth: number;
-  id: string;
-  text: string;
-}
-
-export interface PostSummary {
-  id: number;
-  slug: string;
-  title: string;
-  summary: string;
-  word_count: number;
-  published_at: Timestamp;
-  updated_at: Timestamp;
-  tags: TagRef[];
-  series: SeriesRef | null;
-  cover: Image | null;
-}
-
-export interface SeriesNav extends SeriesRef {
-  index: number;
-  total: number;
-  prev: PostRef | null;
-  next: PostRef | null;
-}
-
-export interface Post extends Omit<PostSummary, "series"> {
-  html: string;
-  toc: TocItem[];
-  has_math: boolean;
-  series: SeriesNav | null;
-  adjacent: { newer: PostRef | null; older: PostRef | null };
-}
-
-export interface Page {
-  slug: string;
-  title: string;
-  description: string;
-  html: string;
-  toc: TocItem[];
-  has_math: boolean;
-  updated_at: Timestamp;
-}
-
-export interface Tag extends TagRef {
-  post_count: number;
-}
-
-export interface SeriesSummary extends SeriesRef {
-  description: string;
-  post_count: number;
-  last_published_at: Timestamp;
-}
-
-export interface SeriesDetail extends SeriesRef {
-  description: string;
-  posts: { index: number; slug: string; title: string; published_at: Timestamp }[];
-}
-
-export interface SearchHit {
-  slug: string;
-  title: string;
-  summary: string;
-  snippet: string;
-  published_at: Timestamp;
-}
-
-export interface SiteSettings {
-  title: string;
-  subtitle: string;
-  description: string;
-  author: string;
-  language: string;
-  timezone: string;
-  footer_text: string;
-  navigation: { label: string; url: string }[];
-  social_links: { platform: string; url: string }[];
-  noindex: boolean;
-  posts_per_page: number;
-}
-
-export interface Items<T> {
-  items: T[];
-}
-
-export interface Paged<T> extends Items<T> {
-  next_cursor: string | null;
-}
+// 后台内容
+export type PostState = Schemas["PostState"];
+export type PageState = Schemas["PageState"];
+export type AdminTagRef = Schemas["AdminTagRef"];
+export type AdminPostSummary = Schemas["AdminPostSummary"];
+export type AdminPostSummaryList = Schemas["AdminPostSummaryList"];
+export type AdminPost = Schemas["AdminPost"];
+export type PostInput = Schemas["PostInput"];
+export type AdminPageSummary = Schemas["AdminPageSummary"];
+export type AdminPageSummaryList = Schemas["AdminPageSummaryList"];
+export type AdminPage = Schemas["AdminPage"];
+export type PageInput = Schemas["PageInput"];
+export type AdminTag = Schemas["AdminTag"];
+export type AdminTagList = Schemas["AdminTagList"];
+export type TagPatch = Schemas["TagPatch"];
+export type AdminSeries = Schemas["AdminSeries"];
+export type AdminSeriesList = Schemas["AdminSeriesList"];
+export type AdminSeriesDetail = Schemas["AdminSeriesDetail"];
+export type SeriesInput = Schemas["SeriesInput"];
+export type SeriesPatch = Schemas["SeriesPatch"];
+export type Media = Schemas["Media"];
+export type MediaList = Schemas["MediaList"];
+export type MediaReference = Schemas["MediaReference"];
+export type MediaDetail = Schemas["MediaDetail"];
+export type AdminSettings = Schemas["AdminSettings"];
+export type SettingsInput = Schemas["SettingsInput"];

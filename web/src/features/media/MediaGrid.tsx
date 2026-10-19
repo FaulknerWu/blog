@@ -1,4 +1,4 @@
-import type { Media } from "~/shared/api/admin-types";
+import type { Media } from "~/shared/api/types";
 import { formatBytes } from "~/shared/lib/format";
 import { cn } from "~/shared/lib/cn";
 import { thumbnail, type UploadItem } from "./uploads";

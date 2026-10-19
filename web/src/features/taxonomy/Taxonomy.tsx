@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import type { SeriesDetail, SeriesSummary, Tag } from "~/shared/api/types";
+import type { SeriesDetail, Series, Tag } from "~/shared/api/types";
 import { formatDate, type Locale } from "~/shared/lib/format";
 
 export function TagIndex({ tags }: { tags: Tag[] }) {
@@ -17,7 +17,7 @@ export function TagIndex({ tags }: { tags: Tag[] }) {
   );
 }
 
-export function SeriesIndex({ series, locale }: { series: SeriesSummary[]; locale: Locale }) {
+export function SeriesIndex({ series, locale }: { series: Series[]; locale: Locale }) {
   return (
     <ul>
       {series.map((s) => (

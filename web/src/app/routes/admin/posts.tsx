@@ -1,15 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import type { AdminPostSummary, PostState } from "~/shared/api/admin-types";
+import type { AdminPostSummary, PostState } from "~/shared/api/types";
 import type { Locale } from "~/shared/lib/format";
 import { formatDateTime, formatWhen } from "~/shared/lib/datetime";
 import { cn } from "~/shared/lib/cn";
 import { button, Status, ui } from "~/shared/ui/admin/ui";
-import { isStale } from "~/features/editor/render/version";
 import { q } from "~/app/admin/queries";
 import { useLocale } from "~/app/site";
-import { PostStatus } from "~/app/admin/status";
+import { PostStatus, useRenderer } from "~/app/admin/status";
 
 export function meta() {
   return [{ title: "文章 · 后台" }];
@@ -35,6 +34,7 @@ export default function Posts() {
   const text = params.get("q") ?? "";
   const tagId = Number(params.get("tag")) || undefined;
   const stale = params.get("stale") === "1";
+  const { isStale } = useRenderer();
 
   function setFilter(key: string, value: string | null) {
     setParams(
@@ -67,7 +67,7 @@ export default function Posts() {
         (!tagId || p.tags.some((t) => t.id === tagId)) &&
         (!stale || isStale(p.renderer_version)),
     );
-  }, [posts.data, state, text, tagId, stale]);
+  }, [posts.data, state, text, tagId, stale, isStale]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -170,6 +170,7 @@ export default function Posts() {
 }
 
 function PostRow({ post: p, locale }: { post: AdminPostSummary; locale: Locale }) {
+  const { isStale } = useRenderer();
   const edit = `/admin/posts/${p.id}`;
   return (
     <tr>

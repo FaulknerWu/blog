@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Media } from "~/shared/api/admin-types";
+import type { Media } from "~/shared/api/types";
 import { cn } from "~/shared/lib/cn";
 import { ui } from "~/shared/ui/admin/ui";
 import { thumbnail, useUploads } from "~/features/media/uploads";

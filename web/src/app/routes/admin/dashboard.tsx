@@ -5,8 +5,8 @@ import { formatBytes, formatMonthDay } from "~/shared/lib/format";
 import { describeUserAgent } from "~/shared/lib/useragent";
 import { cn } from "~/shared/lib/cn";
 import { button, Status, ui } from "~/shared/ui/admin/ui";
-import { isStale, RENDERER_VERSION } from "~/features/editor/render/version";
 import { q } from "~/app/admin/queries";
+import { useRenderer } from "~/app/admin/status";
 import { useLocale } from "~/app/site";
 
 export function meta() {
@@ -36,6 +36,7 @@ export default function Dashboard() {
   const pages = useQuery(q.pages).data ?? [];
   const media = useQuery(q.allMedia).data ?? [];
   const sessions = useQuery(q.sessions).data ?? [];
+  const renderer = useRenderer();
 
   const now = new Date();
   const today = new Intl.DateTimeFormat(locale.language, { timeZone: locale.timezone, dateStyle: "full" }).format(now);
@@ -47,8 +48,8 @@ export default function Dashboard() {
   const published = posts
     .filter((p) => p.state === "published")
     .sort((a, b) => (b.published_at ?? "").localeCompare(a.published_at ?? ""));
-  const stalePosts = posts.filter((p) => isStale(p.renderer_version)).length;
-  const stalePages = pages.filter((p) => isStale(p.renderer_version)).length;
+  const stalePosts = posts.filter((p) => renderer.isStale(p.renderer_version)).length;
+  const stalePages = pages.filter((p) => renderer.isStale(p.renderer_version)).length;
   const unused = media.filter((m) => m.reference_count === 0);
   const unusedBytes = unused.reduce((n, m) => n + m.byte_size, 0);
   const lastLogin = sessions.toSorted((a, b) => b.created_at.localeCompare(a.created_at))[0];
@@ -104,7 +105,7 @@ export default function Dashboard() {
               </span>
               <span className={todoText}>
                 {[stalePosts && `${stalePosts} 篇文章`, stalePages && `${stalePages} 个页面`].filter(Boolean).join("与")}
-                由旧版渲染器生成，当前为 <span className={ui.mono}>{RENDERER_VERSION}</span>。
+                由旧版渲染器生成，当前为 <span className={ui.mono}>{renderer.current}</span>。
               </span>
               <Link to={stalePosts ? "/admin/posts?stale=1" : "/admin/pages"} className={ui.link}>
                 逐篇重新渲染 →

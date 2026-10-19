@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useBeforeUnload, useRevalidator } from "react-router";
 import { adminApi, ApiError } from "~/shared/api/admin";
-import type { AdminSettings, SettingsInput } from "~/shared/api/admin-types";
+import type { AdminSettings, SettingsInput } from "~/shared/api/types";
 import { cn } from "~/shared/lib/cn";
 import { button, ui } from "~/shared/ui/admin/ui";
 import { q, queryClient } from "~/app/admin/queries";

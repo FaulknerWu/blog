@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { upload, ApiError } from "~/shared/api/admin";
-import type { Media } from "~/shared/api/admin-types";
+import type { Media } from "~/shared/api/types";
 
 export const acceptedTypes = ["image/jpeg", "image/png", "image/webp"];
 export const maxUploadBytes = 20 << 20;

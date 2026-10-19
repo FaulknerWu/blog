@@ -3,40 +3,36 @@
 import type {
   AdminPage,
   AdminPageSummary,
+  AdminPageSummaryList,
   AdminPost,
   AdminPostSummary,
+  AdminPostSummaryList,
   AdminSeries,
   AdminSeriesDetail,
+  AdminSeriesList,
   AdminSettings,
   AdminTag,
+  AdminTagList,
+  LoginResult,
   Media,
   MediaDetail,
+  MediaList,
+  Me,
   PageInput,
   PostInput,
   PostState,
-  Session,
+  Problem,
+  RendererInfo,
+  RenderPreview,
+  SeriesInput,
+  SeriesPatch,
+  SessionList,
   SettingsInput,
-  User,
-} from "./admin-types";
-import type { Items, Paged } from "./types";
-
-export interface FieldError {
-  pointer?: string;
-  parameter?: string;
-  code: string;
-  detail: string;
-}
-
-export interface Problem {
-  type: string;
-  title: string;
-  status: number;
-  detail?: string;
-  errors?: FieldError[];
-  current_etag?: string;
-  updated_at?: string;
-  referenced_by?: { type: string; id: number; title: string }[];
-}
+  TagPatch,
+  TokenCreated,
+  TokenInput,
+  TokenList,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -60,6 +56,7 @@ interface Options {
   body?: unknown;
   // 资源版本号，作为 If-Match: "v{version}" 发送。
   version?: number;
+  signal?: AbortSignal;
 }
 
 function url(path: string, query?: Query): string {
@@ -83,7 +80,14 @@ export async function request<T>(method: string, path: string, opts: Options = {
   }
   if (opts.version !== undefined) headers["If-Match"] = `"v${opts.version}"`;
 
-  const res = await fetch(url(path, opts.query), { method, headers, body, credentials: "same-origin" }).catch(() => {
+  const res = await fetch(url(path, opts.query), {
+    method,
+    headers,
+    body,
+    credentials: "same-origin",
+    signal: opts.signal,
+  }).catch((err: unknown) => {
+    if (opts.signal?.aborted) throw err;
     throw new ApiError(0, null, null);
   });
   if (!res.ok) throw await toError(res);
@@ -125,21 +129,28 @@ export interface PostFilter {
   state?: PostState;
   q?: string;
   tag_id?: number;
-  renderer_version_not?: string;
+  stale?: boolean;
 }
 
 export const adminApi = {
   login: (username: string, password: string) =>
-    request<{ user: User }>("POST", "/api/auth/sessions", { body: { username, password } }),
+    request<LoginResult>("POST", "/api/auth/sessions", { body: { username, password } }),
   logout: () => request<void>("DELETE", "/api/auth/sessions/current"),
-  me: () => request<User>("GET", "/api/auth/me"),
-  sessions: () => request<Items<Session>>("GET", "/api/auth/sessions"),
+  me: () => request<Me>("GET", "/api/auth/me"),
+  sessions: () => request<SessionList>("GET", "/api/auth/sessions"),
   revokeSession: (id: number) => request<void>("DELETE", `/api/auth/sessions/${id}`),
   changePassword: (current_password: string, new_password: string) =>
     request<void>("PUT", "/api/auth/password", { body: { current_password, new_password } }),
+  tokens: () => request<TokenList>("GET", "/api/auth/tokens"),
+  createToken: (input: TokenInput) => request<TokenCreated>("POST", "/api/auth/tokens", { body: input }),
+  revokeToken: (id: number) => request<void>("DELETE", `/api/auth/tokens/${id}`),
+
+  renderer: () => request<RendererInfo>("GET", "/api/admin/render"),
+  render: (body_md: string, signal?: AbortSignal) =>
+    request<RenderPreview>("POST", "/api/admin/render", { body: { body_md }, signal }),
 
   posts: (filter: PostFilter, cursor?: string, limit = 50) =>
-    request<Paged<AdminPostSummary>>("GET", "/api/admin/posts", { query: { ...filter, cursor, limit } }),
+    request<AdminPostSummaryList>("GET", "/api/admin/posts", { query: { ...filter, cursor, limit } }),
   post: (id: number) => request<AdminPost>("GET", `/api/admin/posts/${id}`),
   createPost: (input: PostInput) => request<AdminPostSummary>("POST", "/api/admin/posts", { body: input }),
   updatePost: (id: number, version: number, input: PostInput) =>
@@ -153,10 +164,7 @@ export const adminApi = {
   unpublishPost: (id: number, version: number) =>
     request<AdminPostSummary>("DELETE", `/api/admin/posts/${id}/publication`, { version }),
 
-  pages: (rendererVersionNot?: string) =>
-    request<Items<AdminPageSummary>>("GET", "/api/admin/pages", {
-      query: { renderer_version_not: rendererVersionNot },
-    }),
+  pages: (stale?: boolean) => request<AdminPageSummaryList>("GET", "/api/admin/pages", { query: { stale } }),
   page: (id: number) => request<AdminPage>("GET", `/api/admin/pages/${id}`),
   createPage: (input: PageInput) => request<AdminPageSummary>("POST", "/api/admin/pages", { body: input }),
   updatePage: (id: number, version: number, input: PageInput) =>
@@ -167,25 +175,25 @@ export const adminApi = {
   unpublishPage: (id: number, version: number) =>
     request<AdminPageSummary>("DELETE", `/api/admin/pages/${id}/publication`, { version }),
 
-  tags: () => request<Items<AdminTag>>("GET", "/api/admin/tags"),
+  tags: () => request<AdminTagList>("GET", "/api/admin/tags"),
   createTag: (name: string, slug: string) => request<AdminTag>("POST", "/api/admin/tags", { body: { name, slug } }),
-  updateTag: (id: number, version: number, patch: { name?: string; slug?: string }) =>
+  updateTag: (id: number, version: number, patch: TagPatch) =>
     request<AdminTag>("PATCH", `/api/admin/tags/${id}`, { body: patch, version }),
   deleteTag: (id: number, version: number) => request<void>("DELETE", `/api/admin/tags/${id}`, { version }),
 
-  seriesList: () => request<Items<AdminSeries>>("GET", "/api/admin/series"),
+  seriesList: () => request<AdminSeriesList>("GET", "/api/admin/series"),
   series: (id: number) => request<AdminSeriesDetail>("GET", `/api/admin/series/${id}`),
-  createSeries: (input: { title: string; slug: string; description: string }) =>
+  createSeries: (input: SeriesInput) =>
     request<AdminSeries>("POST", "/api/admin/series", { body: input }),
-  updateSeries: (id: number, version: number, patch: { title?: string; slug?: string; description?: string }) =>
+  updateSeries: (id: number, version: number, patch: SeriesPatch) =>
     request<AdminSeries>("PATCH", `/api/admin/series/${id}`, { body: patch, version }),
   deleteSeries: (id: number, version: number) => request<void>("DELETE", `/api/admin/series/${id}`, { version }),
   reorderSeries: (id: number, postIds: number[]) =>
     request<AdminSeriesDetail>("PUT", `/api/admin/series/${id}/posts`, { body: { post_ids: postIds } }),
 
   media: (opts: { unused?: boolean; cursor?: string; limit?: number }) =>
-    request<Paged<Media>>("GET", "/api/admin/media", { query: { limit: 50, ...opts } }),
-  mediaBySha: (sha256: string[]) => request<Paged<Media>>("GET", "/api/admin/media", { query: { sha256 } }),
+    request<MediaList>("GET", "/api/admin/media", { query: { limit: 50, ...opts } }),
+  mediaBySha: (sha256: string[]) => request<MediaList>("GET", "/api/admin/media", { query: { sha256 } }),
   mediaDetail: (id: number) => request<MediaDetail>("GET", `/api/admin/media/${id}`),
   updateMedia: (id: number, version: number, alt: string) =>
     request<Media>("PATCH", `/api/admin/media/${id}`, { body: { alt }, version }),
@@ -197,7 +205,9 @@ export const adminApi = {
 };
 
 // all 依次翻页取回全部条目，用于统计数量等需要完整集合的场景。
-export async function all<T>(fetchPage: (cursor?: string) => Promise<Paged<T>>): Promise<T[]> {
+export async function all<T>(
+  fetchPage: (cursor?: string) => Promise<{ items: T[]; next_cursor: string | null }>,
+): Promise<T[]> {
   const items: T[] = [];
   let cursor: string | undefined;
   do {

@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { adminApi, ApiError } from "~/shared/api/admin";
-import type { AdminSeries, AdminSeriesDetail, AdminTag } from "~/shared/api/admin-types";
+import type { AdminSeries, AdminSeriesDetail, AdminTag } from "~/shared/api/types";
 import { slugError, slugify } from "~/shared/lib/slug";
 import { cn } from "~/shared/lib/cn";
 import { button, ConfirmDialog, Status, ui } from "~/shared/ui/admin/ui";

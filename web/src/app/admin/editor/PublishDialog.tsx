@@ -4,8 +4,7 @@ import type { Locale } from "~/shared/lib/format";
 import { slugError } from "~/shared/lib/slug";
 import { cn } from "~/shared/lib/cn";
 import { button, Dialog, ui } from "~/shared/ui/admin/ui";
-import type { Issue } from "~/features/editor/render/renderer";
-import { RENDERER_VERSION } from "~/features/editor/render/version";
+import type { RenderPreview } from "~/shared/api/types";
 import type { EditorForm, Kind, Meta } from "./model";
 
 const option = "flex cursor-pointer items-start gap-3 border-b border-line-soft py-3.5";
@@ -17,7 +16,7 @@ interface Props {
   kind: Kind;
   meta: Meta | null;
   form: EditorForm;
-  issues: Issue[] | undefined;
+  preview: RenderPreview | undefined;
   seriesTitle: string | undefined;
   locale: Locale;
   busy: boolean;
@@ -35,10 +34,11 @@ function defaultSchedule(meta: Meta | null, timeZone: string) {
   return { date: tomorrow.date, time: "09:00" };
 }
 
-export function PublishDialog({ open, kind, meta, form, issues, seriesTitle, locale, busy, error, onClose, onConfirm }: Props) {
+export function PublishDialog({ open, kind, meta, form, preview, seriesTitle, locale, busy, error, onClose, onConfirm }: Props) {
   const [when, setWhen] = useState<"now" | "later">(meta?.state === "scheduled" ? "later" : "now");
   const [schedule, setSchedule] = useState(() => defaultSchedule(meta, locale.timezone));
 
+  const issues = preview?.issues;
   const errors = issues?.filter((i) => i.severity === "error") ?? [];
   const missingAlt = issues?.filter((i) => i.message === "图片缺少替代文本").length ?? 0;
   const path = kind === "post" ? `/posts/${form.slug}` : `/${form.slug}`;
@@ -55,7 +55,7 @@ export function PublishDialog({ open, kind, meta, form, issues, seriesTitle, loc
       level: "ok",
       text: (
         <>
-          正文已用渲染器 <span className="font-mono text-xs">{RENDERER_VERSION}</span> 渲染，无公式或语法错误
+          正文已用渲染器 <span className="font-mono text-xs">{preview?.renderer_version}</span> 渲染，无公式或语法错误
         </>
       ),
     });
