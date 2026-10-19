@@ -1,6 +1,6 @@
 # 博客系统 API 设计
 
-本文档定义博客系统 HTTP 接口的通用规范、接口清单以及各资源的请求与响应结构。
+本文档定义博客系统 HTTP 接口的通用规范、接口清单以及各资源的请求与响应结构。字段级的完整契约以 [`api/openapi.yaml`](../api/openapi.yaml)（OpenAPI 3.1）为唯一事实来源，前端类型与 CLI 客户端均由其生成；API 的契约测试保证其中的接口清单与实际注册的路由一致。本文档侧重说明规则与语义。
 
 ---
 
@@ -16,7 +16,7 @@
 | **时间格式** | RFC 3339，UTC，保留微秒精度（如 `2026-10-17T08:30:00.123456Z`） |
 | **空值处理** | 可选字段无值时显式返回 `null`，不省略字段 |
 | **未知字段** | 请求体包含未定义字段时返回 `400` |
-| **请求体上限** | 默认 1 MB；文章与页面保存 8 MB；图片上传 20 MB |
+| **请求体上限** | 默认 1 MB；文章与页面保存、正文渲染预览 4 MB（正文本身不超过 1 MB）；图片上传 20 MB |
 
 ### 1.2 认证与安全
 
@@ -25,7 +25,19 @@
   ```http
   Set-Cookie: __Host-session=<token>; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=2592000
   ```
-- **跨站请求校验**：所有非安全方法（`POST`、`PUT`、`PATCH`、`DELETE`）必须满足 `Sec-Fetch-Site: same-origin` 与站点源完全一致，否则返回 `403`。
+- **API 令牌**：供 CLI 与 agent 使用的长期凭据，以 `Authorization: Bearer blog_pat_<base64url>` 提交。令牌由作者在后台签发（或在服务器上执行 `blogd token create`），明文只在签发时返回一次，数据库只保存 SHA-256。请求携带 `Authorization` 头时只按令牌鉴权，忽略会话 Cookie。
+- **权限范围（scope）**：每个令牌拥有一组 scope，管理接口按下表要求 scope；浏览器会话拥有全部 scope。
+
+  | Scope | 允许的操作 |
+  | --- | --- |
+  | `content:read` | 读取后台内容：文章、页面、标签、专栏、媒体、站点设置，以及 `GET /api/admin/render` |
+  | `content:write` | 创建与保存文章、页面草稿，渲染预览，管理标签与专栏 |
+  | `content:publish` | 发布、撤回、删除文章与页面 |
+  | `media:write` | 上传、修改、删除图片 |
+  | `settings:write` | 修改站点设置 |
+
+  令牌缺少所需 scope 时返回 `403`。**仅限会话**的接口（退出登录、会话管理、修改密码、令牌管理）拒绝令牌并返回 `403`，令牌泄露后无法借此提权、续期或签发新令牌；`GET /api/auth/me` 同时接受两种凭据。
+- **跨站请求校验**：只作用于以会话 Cookie 鉴权的非安全方法（`POST`、`PUT`、`PATCH`、`DELETE`）与登录接口，必须满足 `Sec-Fetch-Site: same-origin` 且 `Origin` 与站点源完全一致，否则返回 `403`。浏览器不会自动附带 `Authorization` 头，令牌请求无需此项校验。
 
 ### 1.3 游标分页
 
@@ -71,21 +83,24 @@
 }
 ```
 
+正文渲染失败时，`errors` 中的条目为 `{ "pointer": "#/body_md", "code": "render_error", "detail": "公式无法编译：…", "line": 12 }`，`line` 为 Markdown 原文中的行号。
+
 | `type` 后缀 | 状态码 | 说明 |
 | --- | --- | --- |
 | `malformed-request` | 400 | JSON 语法错误、未知字段、查询参数或游标无法解析 |
-| `unauthenticated` | 401 | 未登录、会话过期或登录凭据错误 |
-| `forbidden` | 403 | 跨站请求校验失败 |
+| `unauthenticated` | 401 | 未登录、会话过期、令牌无效或已过期、登录凭据错误 |
+| `forbidden` | 403 | 跨站请求校验失败、令牌缺少所需 scope，或令牌访问仅限会话的接口 |
 | `not-found` | 404 | 资源不存在，或公开接口访问未发布内容 |
 | `method-not-allowed` | 405 | 请求方法不受支持 |
 | `conflict` | 409 | `slug` 或名称重复、删除仍被引用的图片 |
 | `precondition-failed` | 412 | `If-Match` 版本不匹配 |
 | `payload-too-large` | 413 | 请求体超出大小上限 |
 | `unsupported-media-type` | 415 | `Content-Type` 或上传图片格式不受支持 |
-| `validation-error` | 422 | 字段校验失败或业务规则不满足 |
+| `validation-error` | 422 | 字段校验失败、业务规则不满足，或正文渲染出错（`code: render_error`） |
 | `precondition-required` | 428 | 缺少 `If-Match` 请求头 |
 | `rate-limited` | 429 | 触发请求限流（响应头携带 `Retry-After`） |
 | `internal-error` | 500 | 服务端内部错误 |
+| `service-unavailable` | 503 | 渲染服务暂不可用（保存非空正文、渲染预览、`stale` 筛选时） |
 
 ### 1.6 缓存策略
 
@@ -100,6 +115,8 @@
 
 ## 2. 接口总览
 
+认证列中，“会话”表示仅接受浏览器会话，其余为接受会话或令牌时令牌所需的 scope。
+
 | 分组 | 方法 | 路径 | 认证 | 说明 |
 | --- | --- | --- | --- | --- |
 | **公开内容** | `GET` | `/api/posts` | — | 已发布文章列表 |
@@ -112,42 +129,47 @@
 | | `GET` | `/api/search` | — | 全文检索 |
 | | `GET` | `/api/settings` | — | 公开站点设置 |
 | **认证** | `POST` | `/api/auth/sessions` | — | 登录 |
-| | `DELETE` | `/api/auth/sessions/current` | ✓ | 退出登录 |
-| | `GET` | `/api/auth/sessions` | ✓ | 活跃会话列表 |
-| | `DELETE` | `/api/auth/sessions/{id}` | ✓ | 吊销指定会话 |
-| | `GET` | `/api/auth/me` | ✓ | 当前用户信息 |
-| | `PUT` | `/api/auth/password` | ✓ | 修改密码 |
-| **文章管理** | `GET` | `/api/admin/posts` | ✓ | 文章列表（含草稿与定时发布） |
-| | `POST` | `/api/admin/posts` | ✓ | 创建文章（草稿） |
-| | `GET` | `/api/admin/posts/{id}` | ✓ | 文章详情（含 Markdown 原文） |
-| | `PUT` | `/api/admin/posts/{id}` | ✓ | 保存文章内容 |
-| | `DELETE` | `/api/admin/posts/{id}` | ✓ | 删除文章 |
-| | `PUT` | `/api/admin/posts/{id}/publication` | ✓ | 立即发布或定时发布 |
-| | `DELETE` | `/api/admin/posts/{id}/publication` | ✓ | 撤回发布 |
-| **页面管理** | `GET` | `/api/admin/pages` | ✓ | 页面列表（含草稿） |
-| | `POST` | `/api/admin/pages` | ✓ | 创建页面（草稿） |
-| | `GET` | `/api/admin/pages/{id}` | ✓ | 页面详情（含 Markdown 原文） |
-| | `PUT` | `/api/admin/pages/{id}` | ✓ | 保存页面内容 |
-| | `DELETE` | `/api/admin/pages/{id}` | ✓ | 删除页面 |
-| | `PUT` | `/api/admin/pages/{id}/publication` | ✓ | 发布页面 |
-| | `DELETE` | `/api/admin/pages/{id}/publication` | ✓ | 撤回发布 |
-| **标签管理** | `GET` | `/api/admin/tags` | ✓ | 标签列表 |
-| | `POST` | `/api/admin/tags` | ✓ | 创建标签 |
-| | `PATCH` | `/api/admin/tags/{id}` | ✓ | 修改标签 |
-| | `DELETE` | `/api/admin/tags/{id}` | ✓ | 删除标签 |
-| **专栏管理** | `GET` | `/api/admin/series` | ✓ | 专栏列表 |
-| | `POST` | `/api/admin/series` | ✓ | 创建专栏 |
-| | `GET` | `/api/admin/series/{id}` | ✓ | 专栏详情（含全部成员文章） |
-| | `PATCH` | `/api/admin/series/{id}` | ✓ | 修改专栏 |
-| | `DELETE` | `/api/admin/series/{id}` | ✓ | 删除专栏 |
-| | `PUT` | `/api/admin/series/{id}/posts` | ✓ | 调整专栏文章顺序 |
-| **媒体管理** | `GET` | `/api/admin/media` | ✓ | 图片列表或按哈希批量查询 |
-| | `POST` | `/api/admin/media` | ✓ | 上传图片 |
-| | `GET` | `/api/admin/media/{id}` | ✓ | 图片详情（含引用文章） |
-| | `PATCH` | `/api/admin/media/{id}` | ✓ | 修改默认替代文本 |
-| | `DELETE` | `/api/admin/media/{id}` | ✓ | 删除图片 |
-| **站点设置** | `GET` | `/api/admin/settings` | ✓ | 站点设置详情 |
-| | `PATCH` | `/api/admin/settings` | ✓ | 修改站点设置 |
+| | `DELETE` | `/api/auth/sessions/current` | 会话 | 退出登录 |
+| | `GET` | `/api/auth/sessions` | 会话 | 活跃会话列表 |
+| | `DELETE` | `/api/auth/sessions/{id}` | 会话 | 吊销指定会话 |
+| | `GET` | `/api/auth/me` | 任意凭据 | 当前用户与凭据信息 |
+| | `PUT` | `/api/auth/password` | 会话 | 修改密码 |
+| | `GET` | `/api/auth/tokens` | 会话 | API 令牌列表 |
+| | `POST` | `/api/auth/tokens` | 会话 | 签发 API 令牌 |
+| | `DELETE` | `/api/auth/tokens/{id}` | 会话 | 吊销 API 令牌 |
+| **正文渲染** | `GET` | `/api/admin/render` | `content:read` | 当前渲染器版本 |
+| | `POST` | `/api/admin/render` | `content:write` | 渲染预览（不保存） |
+| **文章管理** | `GET` | `/api/admin/posts` | `content:read` | 文章列表（含草稿与定时发布） |
+| | `POST` | `/api/admin/posts` | `content:write` | 创建文章（草稿） |
+| | `GET` | `/api/admin/posts/{id}` | `content:read` | 文章详情（含 Markdown 原文） |
+| | `PUT` | `/api/admin/posts/{id}` | `content:write` | 保存文章内容 |
+| | `DELETE` | `/api/admin/posts/{id}` | `content:publish` | 删除文章 |
+| | `PUT` | `/api/admin/posts/{id}/publication` | `content:publish` | 立即发布或定时发布 |
+| | `DELETE` | `/api/admin/posts/{id}/publication` | `content:publish` | 撤回发布 |
+| **页面管理** | `GET` | `/api/admin/pages` | `content:read` | 页面列表（含草稿） |
+| | `POST` | `/api/admin/pages` | `content:write` | 创建页面（草稿） |
+| | `GET` | `/api/admin/pages/{id}` | `content:read` | 页面详情（含 Markdown 原文） |
+| | `PUT` | `/api/admin/pages/{id}` | `content:write` | 保存页面内容 |
+| | `DELETE` | `/api/admin/pages/{id}` | `content:publish` | 删除页面 |
+| | `PUT` | `/api/admin/pages/{id}/publication` | `content:publish` | 发布页面 |
+| | `DELETE` | `/api/admin/pages/{id}/publication` | `content:publish` | 撤回发布 |
+| **标签管理** | `GET` | `/api/admin/tags` | `content:read` | 标签列表 |
+| | `POST` | `/api/admin/tags` | `content:write` | 创建标签 |
+| | `PATCH` | `/api/admin/tags/{id}` | `content:write` | 修改标签 |
+| | `DELETE` | `/api/admin/tags/{id}` | `content:write` | 删除标签 |
+| **专栏管理** | `GET` | `/api/admin/series` | `content:read` | 专栏列表 |
+| | `POST` | `/api/admin/series` | `content:write` | 创建专栏 |
+| | `GET` | `/api/admin/series/{id}` | `content:read` | 专栏详情（含全部成员文章） |
+| | `PATCH` | `/api/admin/series/{id}` | `content:write` | 修改专栏 |
+| | `DELETE` | `/api/admin/series/{id}` | `content:write` | 删除专栏 |
+| | `PUT` | `/api/admin/series/{id}/posts` | `content:write` | 调整专栏文章顺序 |
+| **媒体管理** | `GET` | `/api/admin/media` | `content:read` | 图片列表或按哈希批量查询 |
+| | `POST` | `/api/admin/media` | `media:write` | 上传图片 |
+| | `GET` | `/api/admin/media/{id}` | `content:read` | 图片详情（含引用文章） |
+| | `PATCH` | `/api/admin/media/{id}` | `media:write` | 修改默认替代文本 |
+| | `DELETE` | `/api/admin/media/{id}` | `media:write` | 删除图片 |
+| **站点设置** | `GET` | `/api/admin/settings` | `content:read` | 站点设置详情 |
+| | `PATCH` | `/api/admin/settings` | `settings:write` | 修改站点设置 |
 | **内容分发** | `GET` | `/feed.xml` | — | Atom 1.0 全文订阅源 |
 | | `GET` | `/rss.xml` | — | RSS 2.0 全文订阅源 |
 | | `GET` | `/sitemap.xml` | — | Sitemap |
@@ -380,6 +402,8 @@
 
 ### 4.1 登录 `POST /api/auth/sessions`
 
+登录接口执行跨站请求校验，并按客户端 IP 限流（超出时返回 `429` 与 `Retry-After`）。
+
 **请求体**：
 
 ```json
@@ -418,10 +442,12 @@
 
 ### 4.3 当前用户 `GET /api/auth/me`
 
+接受会话或令牌，额外返回本次请求所用凭据的类型（`via` 为 `session` 或 `token`）与权限（会话为全部 scope），供 CLI 自检。
+
 **响应 `200`**：
 
 ```json
-{ "id": 1, "username": "wu", "display_name": "Wu" }
+{ "id": 1, "username": "wu", "display_name": "Wu", "via": "token", "scopes": ["content:read", "content:write"] }
 ```
 
 ### 4.4 修改密码 `PUT /api/auth/password`
@@ -432,7 +458,38 @@
 { "current_password": "••••••••", "new_password": "••••••••••••" }
 ```
 
-**响应 `204`**：更新密码并吊销当前会话外的其余全部会话。
+**响应 `204`**：更新密码并吊销当前会话外的其余全部会话；API 令牌不受影响（服务器上执行 `blogd user reset-password` 时则同时吊销全部会话与令牌）。
+
+### 4.5 API 令牌
+
+以下接口仅接受浏览器会话。
+
+**`Token`**：
+
+```json
+{
+  "id": 4,
+  "name": "claude-code",
+  "scopes": ["content:read", "content:write", "media:write"],
+  "created_at": "2026-10-19T08:00:00.000000Z",
+  "last_used_at": "2026-10-19T09:12:00.000000Z",
+  "expires_at": null
+}
+```
+
+| 接口 | 请求体 | 响应 |
+| --- | --- | --- |
+| `GET /api/auth/tokens` | — | `200`，`{ "items": [Token] }`（含已过期令牌，按创建时间倒序） |
+| `POST /api/auth/tokens` | `{ "name", "scopes", "expires_at"? }` | `201`，`{ "token": Token, "secret": "blog_pat_…" }`；`secret` 只在此时返回 |
+| `DELETE /api/auth/tokens/{id}` | — | `204` |
+
+| 字段 | 约束 |
+| --- | --- |
+| `name` | 1–100 字符（去除首尾空白后），同一用户内唯一，重复返回 `409` |
+| `scopes` | 至少一项，取值见 1.2 节 scope 表 |
+| `expires_at` | 可省略或为 `null`（不过期）；须晚于当前时间 |
+
+`last_used_at` 最多每分钟更新一次。
 
 ---
 
@@ -467,7 +524,8 @@
 | `state` | string | `draft` / `scheduled` / `published`（可选） |
 | `q` | string | 按标题子串筛选（可选） |
 | `tag_id` | integer | 按标签 ID 筛选（可选） |
-| `renderer_version_not` | string | 筛选 `renderer_version` 不等于该值的文章（可选） |
+| `slug` | string | 按 `slug` 精确匹配（可选），CLI 据此按 slug 定位文章 |
+| `stale` | boolean | 为 `true` 时只返回由非当前渲染器版本渲染的文章（空正文不算过期，需要访问渲染服务） |
 | `limit` | integer | 默认 50，最大 100 |
 | `cursor` | string | 分页游标（可选） |
 
@@ -483,13 +541,6 @@
   "slug": "render-on-write",
   "summary": "为什么博客系统应该在保存时而不是读取时渲染 Markdown。",
   "body_md": "## 背景\n\n…\n\n![部署拓扑](/media/9f86d081…0a08)\n",
-  "rendered": {
-    "html": "<h2 id=\"背景\">背景</h2><p>…</p>",
-    "toc": [ { "depth": 2, "id": "背景", "text": "背景" } ],
-    "plain_text": "背景 …",
-    "has_math": false,
-    "renderer_version": "2026.10.0"
-  },
   "tag_ids": [3, 7],
   "series_id": 1,
   "cover_media_id": null
@@ -501,11 +552,15 @@
 | `title` | 必填，1–200 字符 |
 | `slug` | 必填，`^[a-z0-9]+(-[a-z0-9]+)*$`，≤ 100 字符；重复返回 `409` |
 | `summary` | ≤ 500 字符 |
-| `body_md` | ≤ 1 MB；正文中引用的 `/media/{sha256}` 必须已存在 |
-| `rendered` | `body_md` 非空时必填；`html` ≤ 6 MB；`toc` ≤ 200 项且 `depth` 为 2–6 |
+| `body_md` | ≤ 1 MB；正文中以图片引用的 `/media/{sha256}` 必须已存在 |
 | `tag_ids` | ≤ 10 个，必须均已存在 |
 | `series_id` | 可空，必须已存在 |
 | `cover_media_id` | 可空，必须已存在 |
+
+请求体只包含 Markdown 原文，客户端不提交渲染结果（包含 `rendered` 等未定义字段时返回 `400`）。服务端在事务之外调用渲染服务，生成 HTML、目录、搜索纯文本、字数与 `renderer_version` 后与原文一并保存：
+
+- 渲染出错（如公式无法编译、引用的图片不在媒体库中）时返回 `422`，错误条目为 `code: render_error` 并带 `line`；警告（如图片缺少替代文本）不影响保存，可通过渲染预览获取。
+- 渲染服务不可用时返回 `503`；`body_md` 为空时不调用渲染服务，`renderer_version` 为空字符串。
 
 - **`POST` 响应 `201`**：以草稿状态创建，返回 `AdminPostSummary`，响应头含 `Location` 与 `ETag`。
 - **`PUT` 响应 `200`**：要求 `If-Match`，返回 `AdminPostSummary` 与新 `ETag`。
@@ -607,7 +662,7 @@
   | `unused` | boolean | 为 `true` 时仅返回 `reference_count = 0` 的图片 |
   | `limit` / `cursor` | integer / string | 默认 50，最大 100，按上传时间倒序 |
 
-- **详情 `GET /api/admin/media/{id}`**：返回媒体对象，并附加 `referenced_by: [{ "type", "id", "title" }]`，其中 `type` 为 `post` 或 `page`。`reference_count` 为引用该图片的文章与页面数（文章正文与封面同时引用只计一次）。
+- **详情 `GET /api/admin/media/{id}`**：返回媒体对象，并附加 `referenced_by: [{ "type", "id", "title" }]`（没有引用时省略该字段），其中 `type` 为 `post` 或 `page`。`reference_count` 为引用该图片的文章与页面数（文章正文与封面同时引用只计一次）。
 - **修改 `PATCH /api/admin/media/{id}`**：请求体 `{ "alt": "..." }`，返回 `200` 与媒体对象。
 - **删除 `DELETE /api/admin/media/{id}`**：无引用时返回 `204`；仍被文章正文、文章封面或页面正文引用时返回 `409`（附带 `referenced_by`）。
 
@@ -675,19 +730,42 @@
 
 **`AdminPage`**（`GET /api/admin/pages/{id}` 响应体）：在 `AdminPageSummary` 基础上增加 `description`（string）、`body_md`（string）。
 
-- **列表 `GET /api/admin/pages`**：返回 `{ "items": [AdminPageSummary] }`，按 `updated_at` 倒序，不分页；可选查询参数 `renderer_version_not`（含义同文章列表）。
-- **创建 `POST /api/admin/pages` 与保存 `PUT /api/admin/pages/{id}`**：请求体为 `{ "title", "slug", "description", "body_md", "rendered" }`，`rendered` 结构与约束同文章。`POST` 返回 `201`、`Location` 与 `ETag`；`PUT` 要求 `If-Match`，返回 `200` 与新 `ETag`。
+- **列表 `GET /api/admin/pages`**：返回 `{ "items": [AdminPageSummary] }`，按 `updated_at` 倒序，不分页；可选查询参数 `slug`、`stale`（含义同文章列表）。
+- **创建 `POST /api/admin/pages` 与保存 `PUT /api/admin/pages/{id}`**：请求体为 `{ "title", "slug", "description", "body_md" }`，服务端渲染规则与错误同文章。`POST` 返回 `201`、`Location` 与 `ETag`；`PUT` 要求 `If-Match`，返回 `200` 与新 `ETag`。
 
   | 字段 | 约束 |
   | --- | --- |
   | `title` | 必填，1–200 字符 |
   | `slug` | 必填，`^[a-z0-9]+(-[a-z0-9]+)*$`，≤ 100 字符；不能为站点保留路径（`admin`、`api`、`archive`、`archives`、`assets`、`feed`、`healthz`、`login`、`logout`、`media`、`page`、`pages`、`posts`、`problems`、`rss`、`search`、`series`、`sitemap`、`static`、`tags`），否则返回 `422`（`code: reserved`）；与其他页面重复返回 `409`。页面与文章的 `slug` 相互独立 |
   | `description` | ≤ 500 字符，用作 meta description |
-  | `body_md` / `rendered` | 同文章 |
+  | `body_md` | 同文章 |
 
 - **删除 `DELETE /api/admin/pages/{id}`**：要求 `If-Match`，物理删除页面及其媒体引用与历史别名，返回 `204`。
 - **发布 `PUT /api/admin/pages/{id}/publication`**：要求 `If-Match`；请求体须为空或 `{}`（页面没有定时发布）；正文为空时返回 `422`；已发布时不修改、版本号不变。返回 `200`、`AdminPageSummary` 与 `ETag`。
 - **撤回 `DELETE /api/admin/pages/{id}/publication`**：要求 `If-Match`，状态恢复为 `draft`；已是草稿时不修改。返回 `200`、`AdminPageSummary` 与 `ETag`。
+
+### 5.11 正文渲染
+
+正文由独立的渲染服务完成 Markdown 解析、代码高亮与公式编译，API 只在写入时调用它（写时渲染）。以下接口供后台编辑器预览与 CLI 自检：
+
+- **渲染器版本 `GET /api/admin/render`**：返回 `{ "renderer_version": "2026.10.0" }`。`renderer_version` 不等于该值的非空内容即为过期内容；渲染器升级后 API 启动时会自动重新渲染过期内容，也可在服务器上执行 `blogd rerender`。重新渲染会递增版本号，使公开接口的 `ETag` 失效。
+- **渲染预览 `POST /api/admin/render`**：请求体 `{ "body_md": "..." }`，不保存。渲染问题随结果返回而不作为错误响应：
+
+  ```json
+  {
+    "html": "<h2 id=\"背景\">背景</h2><p>…</p>",
+    "toc": [ { "depth": 2, "id": "背景", "text": "背景" } ],
+    "has_math": true,
+    "word_count": 3820,
+    "renderer_version": "2026.10.0",
+    "issues": [
+      { "line": 12, "message": "公式无法编译：…", "severity": "error" },
+      { "line": 20, "message": "图片缺少替代文本", "severity": "warning" }
+    ]
+  }
+  ```
+
+  `severity` 为 `error` 的问题会使保存返回 `422`；`warning` 仅作提示。渲染服务不可用时返回 `503`。
 
 ---
 
@@ -701,4 +779,4 @@
 | `GET /robots.txt` | `text/plain` | 允许抓取全部路径并声明 Sitemap 地址；`noindex` 时仅省略 Sitemap 声明，不使用 `Disallow`（抓取器须能访问页面才能读到 `noindex` 标记），订阅源同时附加 `X-Robots-Tag: noindex` |
 | `GET /media/{sha256}` | 对应图片 MIME | 返回图片默认规格（不超过 1600 宽的最大档位） |
 | `GET /media/{sha256}/{width}.{format}` | 对应图片 MIME | 返回指定衍生规格，不存在时返回 `404` |
-| `GET /healthz` | `application/json` | 正常返回 `200`（`{"status":"ok"}`），异常返回 `503` |
+| `GET /healthz` | `application/json` | 只检查数据库连接：正常返回 `200`（`{"status":"ok"}`），异常返回 `503`（`{"status":"unavailable"}`）；不依赖渲染服务 |

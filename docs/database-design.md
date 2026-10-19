@@ -31,12 +31,14 @@ erDiagram
     pages ||--o{ page_media : "正文引用"
     page_media }o--|| media : "媒体资源"
     users ||--o{ sessions : "持有会话"
+    users ||--o{ api_tokens : "持有令牌"
 ```
 
 | 表名 | 职责 |
 | --- | --- |
 | `users` | 作者账号与密码哈希凭据 |
 | `sessions` | 服务端会话状态（仅存令牌哈希） |
+| `api_tokens` | 供 CLI 与 agent 使用的 API 令牌及其权限范围（仅存令牌哈希） |
 | `posts` | 文章原文、预渲染产物、发布状态与专栏归属 |
 | `post_slug_history` | 文章修改 `slug` 后保留的历史别名，用于重定向 |
 | `tags` | 标签定义 |
@@ -255,6 +257,21 @@ erDiagram
 [ { "platform": "github", "url": "https://github.com/wu" }, { "platform": "email", "url": "mailto:wu@example.com" } ]
 ```
 
+### 3.11 API 令牌表 `api_tokens`
+
+API 令牌以 `Authorization: Bearer blog_pat_<base64url>` 提交，与会话一样只保存 SHA-256 哈希；明文只在签发时返回一次。令牌没有滑动续期，可选的 `expires_at` 为固定过期时间。
+
+| 字段 | 类型 | 约束 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `bigint` | PK | 令牌标识 |
+| `user_id` | `bigint` | NOT NULL, FK → `users(id)` ON DELETE CASCADE | 所属用户 |
+| `name` | `text` | NOT NULL, 长度 1–100, UNIQUE (`user_id`, `name`) | 令牌名称（如 `claude-code`），用于识别与按名吊销 |
+| `token_hash` | `bytea` | NOT NULL, UNIQUE, `octet_length = 32` | 令牌明文的 SHA-256 哈希 |
+| `scopes` | `text[]` | NOT NULL, 非空, 取值 ⊆ {`content:read`, `content:write`, `content:publish`, `media:write`, `settings:write`} | 权限范围 |
+| `created_at` | `timestamptz` | NOT NULL, DEFAULT `now()` | 签发时间 |
+| `last_used_at` | `timestamptz` | NULL | 最近使用时间（最多每分钟更新一次） |
+| `expires_at` | `timestamptz` | NULL | 过期时间，`NULL` 表示不过期 |
+
 ---
 
 ## 4. 数据一致性与状态规则
@@ -282,7 +299,9 @@ erDiagram
 - **保存页面**：在同一事务中更新 `pages` 主记录、维护 `page_slug_history`（规则同文章），并重建 `page_media` 图片引用。
 - **保存文章**：在同一事务中更新 `posts` 主记录、维护 `post_slug_history`（当 `slug` 变更时记录旧值，并移除与新 `slug` 同名的历史记录）、同步 `post_tags` 关联、分配专栏序号 `series_position`（当首次加入或切换专栏时取 `max + 1`），并重建 `post_media` 图片引用。
 - **删除专栏**：在同一事务中先将所属文章的 `series_id` 与 `series_position` 置空，再删除 `series` 记录。
-- **修改密码**：在同一事务中更新 `users.password_hash` 并删除当前会话外的其余 `sessions` 记录。
+- **修改密码**：在同一事务中更新 `users.password_hash` 并删除当前会话外的其余 `sessions` 记录；`api_tokens` 不受影响。
+- **重置密码**（服务器上执行 `blogd user reset-password`）：在同一事务中更新密码哈希，并删除该用户的全部 `sessions` 与 `api_tokens` 记录。
+- **重新渲染**：渲染器升级后逐条更新过期文章与页面的渲染产物，以 `WHERE id = … AND version = …` 条件更新并递增 `version`；期间被编辑过的记录跳过（编辑保存时已用新渲染器渲染）。
 
 ---
 
@@ -296,6 +315,9 @@ erDiagram
 | `sessions` | `sessions_token_hash_key` | `UNIQUE (token_hash)` | 会话令牌校验 |
 | `sessions` | `sessions_user_id_idx` | `(user_id)` | 用户活跃会话查询与批量吊销 |
 | `sessions` | `sessions_expires_at_idx` | `(expires_at)` | 过期会话清理 |
+| `api_tokens` | `api_tokens_token_hash_key` | `UNIQUE (token_hash)` | 令牌校验 |
+| `api_tokens` | `api_tokens_user_name_key` | `UNIQUE (user_id, name)` | 同一用户内令牌名称唯一、按名吊销 |
+| `api_tokens` | `api_tokens_user_id_idx` | `(user_id)` | 用户令牌列表 |
 | `posts` | `posts_slug_key` | `UNIQUE (slug)` | 按 `slug` 查询文章详情 |
 | `posts` | `posts_published_idx` | `(published_at DESC, id DESC) WHERE status = 'published'` | 公开文章列表游标分页、订阅源与 Sitemap |
 | `posts` | `posts_updated_idx` | `(updated_at DESC, id DESC)` | 后台文章列表游标分页 |
