@@ -1,12 +1,12 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 import { adminApi, ApiError } from "~/shared/api/admin";
-import type { Session } from "~/shared/api/types";
-import { formatWhen } from "~/shared/lib/datetime";
+import type { Scope, Session, Token, TokenCreated } from "~/shared/api/types";
+import { formatWhen, fromZonedInput } from "~/shared/lib/datetime";
 import { formatMonthDay } from "~/shared/lib/format";
 import { describeUserAgent } from "~/shared/lib/useragent";
 import { cn } from "~/shared/lib/cn";
-import { button, ui } from "~/shared/ui/admin/ui";
+import { button, ConfirmDialog, ui } from "~/shared/ui/admin/ui";
 import { q, queryClient } from "~/app/admin/queries";
 import { useLocale } from "~/app/site";
 
@@ -31,6 +31,7 @@ export default function Account() {
       <h1 className={ui.h1}>账户与安全</h1>
       <PasswordForm />
       <Sessions />
+      <Tokens />
     </div>
   );
 }
@@ -209,7 +210,12 @@ function SessionRow({
           {s.current && <span className="text-xs text-accent">当前浏览器</span>}
         </span>
         <span className="text-xs text-muted">
-          <span className="font-mono">{s.ip}</span> · 登录于 {formatMonthDay(s.created_at, locale)} · 最近活动{" "}
+          {s.ip && (
+            <>
+              <span className="font-mono">{s.ip}</span> ·{" "}
+            </>
+          )}
+          登录于 {formatMonthDay(s.created_at, locale)} · 最近活动{" "}
           {formatWhen(s.last_seen_at, locale)}
         </span>
       </span>
@@ -220,5 +226,205 @@ function SessionRow({
         </button>
       )}
     </li>
+  );
+}
+
+const scopes: { scope: Scope; label: string }[] = [
+  { scope: "content:read", label: "读取内容" },
+  { scope: "content:write", label: "撰写草稿、管理标签与专栏" },
+  { scope: "content:publish", label: "发布、撤回与删除" },
+  { scope: "media:write", label: "上传与管理图片" },
+  { scope: "settings:write", label: "修改站点设置" },
+];
+
+// Tokens 管理供 blog CLI 与 agent 使用的 API 令牌；令牌明文只在创建后显示一次。
+function Tokens() {
+  const locale = useLocale();
+  const tokens = useQuery(q.tokens);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<TokenCreated | null>(null);
+  const [revoking, setRevoking] = useState<Token | null>(null);
+
+  const revoke = useMutation({
+    mutationFn: (id: number) => adminApi.revokeToken(id),
+    onSuccess: () => setRevoking(null),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: q.tokens.queryKey }),
+  });
+
+  return (
+    <section className="flex flex-col gap-2">
+      <div className={ui.secHead}>
+        <h2 className={ui.h2}>API 令牌</h2>
+        {!creating && (
+          <button
+            type="button"
+            className={ui.linkBtn}
+            onClick={() => {
+              setCreated(null);
+              setCreating(true);
+            }}
+          >
+            新建令牌
+          </button>
+        )}
+      </div>
+      {creating && (
+        <TokenForm
+          onCancel={() => setCreating(false)}
+          onCreated={(t) => {
+            setCreating(false);
+            setCreated(t);
+          }}
+        />
+      )}
+      {created && <NewSecret created={created} onDismiss={() => setCreated(null)} />}
+      <ul>
+        {(tokens.data ?? []).map((t) => (
+          <li key={t.id} className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5 border-b border-line-soft py-4">
+            <span className="flex flex-[1_1_280px] flex-col gap-1">
+              <span className="font-serif text-lg leading-normal font-semibold">{t.name}</span>
+              <span className="text-xs text-muted">
+                <span className="font-mono">{t.scopes.join(" ")}</span> · 创建于 {formatMonthDay(t.created_at, locale)} ·{" "}
+                {t.last_used_at ? `最近使用 ${formatWhen(t.last_used_at, locale)}` : "从未使用"}
+              </span>
+            </span>
+            <span className="text-xs text-muted">{t.expires_at ? `${formatMonthDay(t.expires_at, locale)}失效` : "长期有效"}</span>
+            <button type="button" className={cn(ui.linkBtn, "text-danger hover:text-danger")} onClick={() => setRevoking(t)}>
+              吊销
+            </button>
+          </li>
+        ))}
+      </ul>
+      {tokens.isPending && <p className={ui.empty}>正在加载…</p>}
+      {tokens.data?.length === 0 && !creating && !created && <p className={ui.empty}>还没有令牌。</p>}
+      <ConfirmDialog
+        open={revoking !== null}
+        title={`吊销令牌「${revoking?.name ?? ""}」？`}
+        lead="使用它的 CLI 与 agent 将立即无法访问。"
+        confirmLabel="吊销"
+        danger
+        busy={revoke.isPending}
+        error={revoke.error?.message}
+        onConfirm={() => revoking && revoke.mutate(revoking.id)}
+        onClose={() => {
+          setRevoking(null);
+          revoke.reset();
+        }}
+      />
+    </section>
+  );
+}
+
+function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (t: TokenCreated) => void }) {
+  const locale = useLocale();
+  const [name, setName] = useState("");
+  const [chosen, setChosen] = useState<Scope[]>(["content:read", "content:write"]);
+  const [expires, setExpires] = useState("");
+
+  const create = useMutation({
+    mutationFn: () =>
+      adminApi.createToken({
+        name: name.trim(),
+        scopes: chosen,
+        // 过期日期按站点时区取当天结束。
+        expires_at: expires ? fromZonedInput(expires, "23:59", locale.timezone).toISOString() : null,
+      }),
+    onSuccess: (t) => {
+      queryClient.invalidateQueries({ queryKey: q.tokens.queryKey });
+      onCreated(t);
+    },
+  });
+  const nameError = create.error instanceof ApiError ? create.error.fieldError("name") : undefined;
+
+  function toggle(scope: Scope, on: boolean) {
+    setChosen((cur) => (on ? [...cur, scope] : cur.filter((s) => s !== scope)));
+  }
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || chosen.length === 0) return;
+    create.mutate();
+  }
+
+  return (
+    <form className="flex max-w-105 flex-col gap-4 border-b border-line-soft py-4.5" onSubmit={submit}>
+      <label className={ui.field}>
+        <span className={ui.label}>名称</span>
+        <input
+          className={ui.input}
+          required
+          maxLength={100}
+          placeholder="claude-code"
+          aria-invalid={!!nameError || undefined}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        {nameError && <span className={ui.error}>{nameError}</span>}
+      </label>
+      <fieldset className={ui.field}>
+        <legend className={cn(ui.label, "mb-1.5")}>权限</legend>
+        {scopes.map(({ scope, label }) => (
+          <label key={scope} className="flex cursor-pointer items-baseline gap-2.5 py-1 text-md">
+            <input
+              type="checkbox"
+              className={cn(ui.checkbox, "translate-y-0.5")}
+              checked={chosen.includes(scope)}
+              onChange={(e) => toggle(scope, e.target.checked)}
+            />
+            <span>{label}</span>
+            <span className={cn(ui.mono, "text-muted")}>{scope}</span>
+          </label>
+        ))}
+      </fieldset>
+      <label className={ui.field}>
+        <span className={ui.label}>过期日期（可选）</span>
+        <input className={cn(ui.input, "w-50")} type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
+      </label>
+      {create.isError && !nameError && (
+        <p role="alert" className={cn(ui.notice, "text-danger")}>
+          {create.error.message}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button type="submit" className={button({ variant: "primary" })} disabled={create.isPending || !name.trim() || chosen.length === 0}>
+          创建
+        </button>
+        <button type="button" className={button()} onClick={onCancel}>
+          取消
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function NewSecret({ created, onDismiss }: { created: TokenCreated; onDismiss: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(created.secret);
+    setCopied(true);
+  }
+
+  return (
+    <div role="status" className="flex flex-col gap-2 border-b border-line-soft py-4.5">
+      <span className={ui.label}>令牌「{created.token.name}」· 只显示这一次</span>
+      <span className="flex max-w-160 gap-2">
+        <input
+          className={cn(ui.input, "font-mono text-sm")}
+          readOnly
+          value={created.secret}
+          aria-label="令牌"
+          onFocus={(e) => e.currentTarget.select()}
+        />
+        <button type="button" className={button()} onClick={() => void copy()}>
+          {copied ? "已复制" : "复制"}
+        </button>
+      </span>
+      <span>
+        <button type="button" className={ui.linkBtn} onClick={onDismiss}>
+          完成
+        </button>
+      </span>
+    </div>
   );
 }
