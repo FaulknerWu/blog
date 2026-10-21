@@ -10,9 +10,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/blogd /usr/local/bin/blogd
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV BLOG_LISTEN_ADDR=:8080 \
-    BLOG_MEDIA_DIR=/data/media \
-    BLOG_TRUST_PROXY=true \
-    BLOG_RENDER_URL=http://render:8090
+    BLOG_MEDIA_DIR=/data/media
 VOLUME /data/media
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["blogd", "healthcheck"]

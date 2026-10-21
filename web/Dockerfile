@@ -11,8 +11,7 @@ COPY --from=build /src/package.json ./
 COPY --from=build /src/node_modules ./node_modules
 COPY --from=build /src/build ./build
 ENV NODE_ENV=production \
-    PORT=3000 \
-    API_ORIGIN=http://api:8080
+    PORT=3000
 USER node
 EXPOSE 3000
 CMD ["node_modules/.bin/react-router-serve", "./build/server/index.js"]
